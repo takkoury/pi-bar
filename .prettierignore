@@ -1,3 +1,4 @@
 node_modules/
+.pi/
 package-lock.json
 footer-prototype.html
