@@ -49,6 +49,7 @@ export const example = (): FooterData => ({
   },
   usage: { input: 217000, output: 12000, cache: 92, cost: 0.05 },
   context: { tokens: 182000, capacity: 500000 },
+  provider: "openai-codex",
   model: "gpt-5.4",
   thinking: "high",
   task: { state: "working", elapsedMs: 12000, speed: 42 },

@@ -22,17 +22,14 @@ const theme = (appearance: "dark" | "light") =>
       styleText(text, options as Parameters<typeof styleText>[1], "truecolor"),
   }) as Theme;
 
-test("approved wide layout, separators and unpadded task metrics", () => {
+test("wide layout uses consistent separators, provider prefix and compact metrics", () => {
   const data = example();
   const [top, bottom] = layoutFooter(data, 160);
-  assert.equal(plain(top.left), "atlas / main │ 3 modified · 1 staged · 2 untracked │ 2 ahead");
-  assert.equal(plain(top.right), "gpt-5.4 · high");
-  assert.equal(plain(bottom.left), "182k/500k ▰▰▰▰▰▰▰▰▰▰▰▰ │ in 217k · out 12k │ cache 92% │ $0.050");
-  assert.equal(plain(bottom.right), "● working │ 12s · 42 tok/s");
-  assert.equal(
-    plain(taskVariants({ state: "done", elapsedMs: 48000, speed: 56 })[0].parts),
-    "✓ done │ 48s · 56 tok/s avg",
-  );
+  assert.equal(plain(top.left), "atlas │ main │ 3 modified · 1 staged · 2 untracked │ 2 ahead");
+  assert.equal(plain(top.right), "openai-codex/gpt-5.4 · high");
+  assert.equal(plain(bottom.left), "182k/500k ▰▰▰▰▰▰▰▰ │ ↑217k · ↓12k │ cache 92% │ $0.050");
+  assert.equal(plain(bottom.right), "● working │ 12 · 42 tok/s");
+  assert.equal(plain(taskVariants({ state: "done", elapsedMs: 48000, speed: 56 })[0].parts), "✓ done │ 48 · 56 tok/s");
 });
 
 test("all widths, states, palettes and meters render exactly two bounded rows", () => {
@@ -99,15 +96,53 @@ test("Git warnings and unique dirty count are protected as space shrinks", () =>
   assert.match(plain(layoutFooter(data, 120)[0].left), /upstream unknown/);
 });
 
-test("no terminal control injection through repo/model names", () => {
+test("no terminal control injection through repo/provider/model names", () => {
   const data = example();
   data.git.repo = "evil\x1b[2J\nrepo";
+  data.provider = "\x1b[31mprovider\x1b[0m\nname";
   data.model = "\x1b]0;evil title\x07model\tname";
   const lines = renderFooter(data, 160, theme("dark")).map(stripVTControlCharacters);
   assert.ok(lines[0].includes("evil repo"));
+  assert.ok(lines[0].includes("provider name/"));
   assert.ok(lines[0].includes("model name"));
   assert.ok(!lines.some((line) => /[\n\t\x1b]/.test(line)));
   assert.equal(cleanText("a\u202eb\r\nc"), "a b c");
+});
+
+test("compact model labels retain the provider prefix", () => {
+  const data = example();
+  data.provider = "anthropic";
+  data.model = "claude-opus-4-6-with-an-extra-long-model-name";
+  let shortened = false;
+  for (const columns of [60, 80, 100, 120, 160, 240]) {
+    const label = plain(layoutFooter(data, columns)[0].right);
+    if (!label) continue;
+    assert.ok(label.startsWith("anthropic/"), label);
+    if (label.includes("…")) shortened = true;
+  }
+  assert.equal(shortened, true);
+});
+
+test("Cells uses eight cells with proportional fill; Line keeps its existing length", () => {
+  for (const meter of ["cells", "line"] as const) {
+    const size = meter === "cells" ? 8 : 12;
+    const glyph = meter === "cells" ? "▰" : "━";
+    for (const tokens of [0, 250000, 500000, 600000, null]) {
+      const data = example();
+      data.meter = meter;
+      data.context.tokens = tokens;
+      const bar = layoutFooter(data, 160)[1].left.filter((part) => part.text.includes(glyph));
+      assert.equal(plain(bar).length, size);
+      const filled = bar.filter((part) => part.tone !== "track");
+      const expected = tokens === null ? 0 : Math.round(Math.min(tokens / 500000, 1) * size);
+      assert.equal(plain(filled).length, expected);
+    }
+  }
+  // The default mode is Cells; narrow layouts may shorten it further, never lengthen it.
+  for (const columns of [40, 60, 80, 120, 160]) {
+    const text = plain(layoutFooter(example(), columns)[1].left);
+    assert.ok((text.match(/▰/g) ?? []).length <= 8);
+  }
 });
 
 test("invalid terminal widths render empty rows rather than throwing", () => {
@@ -131,7 +166,7 @@ test("invalid context values are displayed as unknown", () => {
   }
 });
 
-test("number and duration formatting use compact, stable units", () => {
+test("number formatting uses compact, stable units", () => {
   for (const [value, expected] of [
     [0, "0"],
     [999, "999"],
@@ -141,13 +176,25 @@ test("number and duration formatting use compact, stable units", () => {
   ] as const) {
     assert.equal(formatNumber(value), expected);
   }
+});
+
+test("duration uses zero-padded clock fields and omits only unused leading fields", () => {
   for (const [ms, expected] of [
-    [0, "0s"],
-    [59000, "59s"],
-    [60000, "1m"],
-    [61000, "1m01s"],
-    [3600000, "1h0m"],
-    [3660000, "1h1m"],
+    [0, "00"],
+    [999, "00"],
+    [1000, "01"],
+    [9000, "09"],
+    [59000, "59"],
+    [59999, "59"],
+    [60000, "01:00"],
+    [61000, "01:01"],
+    [189000, "03:09"],
+    [3599999, "59:59"],
+    [3600000, "01:00:00"],
+    [3660000, "01:01:00"],
+    [5013000, "01:23:33"],
+    [86400000, "24:00:00"],
+    [360000000, "100:00:00"],
   ] as const) {
     assert.equal(formatDuration(ms), expected);
   }

@@ -41,7 +41,7 @@ function harness(t: TestContext, mode: ExtensionContext["mode"] = "tui") {
     mode,
     hasUI: mode === "tui" || mode === "rpc",
     cwd,
-    model: { id: "gpt-test", contextWindow: 500000 },
+    model: { provider: "openai", id: "gpt-test", contextWindow: 500000 },
     thinkingLevel: "high",
     getContextUsage: () => ({
       tokens: contextTokens,
@@ -130,7 +130,8 @@ test("extension lifecycle: continuation, final result, abort/error, model/thinki
   await h.emit("agent_start");
   await h.emit("agent_settled", { aborted: false });
   assert.match(h.rows()![1], /✓ done/);
-  assert.match(h.rows()![1], /50 tok\/s avg/);
+  assert.match(h.rows()![1], /50 tok\/s/);
+  assert.doesNotMatch(h.rows()![1], /avg/);
   assert.equal(h.entries.at(-1)?.type, "custom");
 
   await h.emit("before_agent_start");
@@ -150,7 +151,7 @@ test("extension lifecycle: continuation, final result, abort/error, model/thinki
   assert.match(h.rows()![1], /20k\/500k/);
   h.ctx.thinkingLevel = "low";
   await h.emit("thinking_level_select");
-  assert.match(h.rows()![0], /gpt-test · low/);
+  assert.match(h.rows()![0], /openai\/gpt-test · low/);
   await h.run("off");
   assert.equal(h.state().subscriptions, 0);
   await h.run("on");
@@ -218,7 +219,7 @@ test("statistics cache avoids rescanning history until its inputs change", async
   assert.equal(h.state().statsReads, 1);
 
   h.entries.push(entry({ type: "message", message: assistant() }));
-  assert.match(h.rows()![1], /in 400 · out 200/);
+  assert.match(h.rows()![1], /↑400 · ↓200/);
   assert.equal(h.state().statsReads, 2);
 
   h.setTokens(20000);
@@ -235,6 +236,21 @@ test("statistics cache avoids rescanning history until its inputs change", async
   h.ctx.model = { ...h.ctx.model!, id: "replacement-model" };
   assert.match(h.rows()![1], /40k\/500k/);
   assert.equal(h.state().statsReads, 5);
+});
+
+test("model label follows provider changes and handles no selected model", async (t) => {
+  const h = harness(t);
+  await h.emit("session_start");
+  assert.match(h.rows()![0], /openai\/gpt-test · high/);
+
+  h.ctx.model = { ...h.ctx.model!, provider: "custom" };
+  await h.emit("model_select");
+  assert.match(h.rows()![0], /custom\/gpt-test · high/);
+
+  h.ctx.model = undefined;
+  await h.emit("model_select");
+  assert.match(h.rows()![0], /no model · high/);
+  assert.doesNotMatch(h.rows()![0], /custom\/|undefined/);
 });
 
 test("tree navigation restores task state and duplicate settlement does not persist twice", async (t) => {

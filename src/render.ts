@@ -26,6 +26,7 @@ export interface FooterData {
   git: GitSnapshot;
   usage: UsageTotals;
   context: { tokens: number | null; capacity: number };
+  provider: string;
   model: string;
   thinking: string;
   task: TaskSnapshot;
@@ -102,10 +103,10 @@ export function formatNumber(value: number): string {
 
 export function formatDuration(ms: number): string {
   const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600)
-    return `${Math.floor(seconds / 60)}m${seconds % 60 ? `${String(seconds % 60).padStart(2, "0")}s` : ""}`;
-  return `${Math.floor(seconds / 3600)}h${Math.floor((seconds % 3600) / 60)}m`;
+  const parts = [seconds % 60];
+  if (seconds >= 60) parts.unshift(Math.floor(seconds / 60) % 60);
+  if (seconds >= 3600) parts.unshift(Math.floor(seconds / 3600));
+  return parts.map((part) => String(part).padStart(2, "0")).join(":");
 }
 
 export const contextTone = (percent: number): Tone => (percent >= 90 ? "red" : percent >= 70 ? "amber" : "blue");
@@ -114,13 +115,10 @@ function gitVariants(data: GitSnapshot): Variants {
   const repo = cleanText(data.repo);
   const branch = cleanText(data.branch);
   const identity = (short = false): Parts =>
-    joinGroups(
-      [
-        [segment(short ? truncateToWidth(repo, 9, "…") : repo)],
-        ...(data.kind === "repo" ? [[segment(short ? truncateToWidth(branch, 14, "…") : branch, "lavender")]] : []),
-      ],
-      " / ",
-    );
+    joinGroups([
+      [segment(short ? truncateToWidth(repo, 9, "…") : repo)],
+      ...(data.kind === "repo" ? [[segment(short ? truncateToWidth(branch, 14, "…") : branch, "lavender")]] : []),
+    ]);
   if (data.kind !== "repo") {
     const label =
       data.kind === "loading" ? "checking Git…" : data.kind === "not-repo" ? "not a Git repo" : "Git unavailable";
@@ -173,13 +171,15 @@ function gitVariants(data: GitSnapshot): Variants {
 }
 
 function modelVariants(data: FooterData): Variants {
+  const provider = cleanText(data.provider);
+  const prefix = provider ? `${provider}/` : "";
   const model = cleanText(data.model || "no model");
   const short = model.replace(/^claude-/, "");
   const level = [segment(" · ", "separator"), segment(cleanText(data.thinking), "dim")];
   return [
-    variant([segment(model, "dim"), ...level]),
-    variant([segment(short, "dim"), ...level]),
-    variant([segment(truncateToWidth(short, 22, "…"), "dim")]),
+    variant([segment(prefix + model, "dim"), ...level]),
+    variant([segment(prefix + short, "dim"), ...level]),
+    variant([segment(prefix + truncateToWidth(short, 22, "…"), "dim")]),
   ];
 }
 
@@ -200,17 +200,19 @@ function usageVariants(data: FooterData): Variants {
     ];
   };
   const io = [
-    segment(`in ${formatNumber(data.usage.input)}`, "lavender"),
+    segment(`↑${formatNumber(data.usage.input)}`, "lavender"),
     segment(" · ", "separator"),
-    segment(`out ${formatNumber(data.usage.output)}`, "lavender"),
+    segment(`↓${formatNumber(data.usage.output)}`, "lavender"),
   ];
   const cache = data.usage.cache === null ? [] : [segment(`cache ${Math.round(data.usage.cache)}%`, "green")];
   const cost = [segment(`$${data.usage.cost.toFixed(3)}`, "gold")];
+  const fullSize = data.meter === "line" ? 12 : 8;
+  const compactSize = data.meter === "line" ? 8 : 6;
   return [
-    variant(joinGroups([context(12), io, cache, cost])),
-    variant(joinGroups([context(8), io, cache, cost])),
-    variant(joinGroups([context(8), io, cost])),
-    variant(joinGroups([context(8), cost])),
+    variant(joinGroups([context(fullSize), io, cache, cost])),
+    variant(joinGroups([context(compactSize), io, cache, cost])),
+    variant(joinGroups([context(compactSize), io, cost])),
+    variant(joinGroups([context(compactSize), cost])),
     variant(joinGroups([context(4), cost])),
     variant(context(4)),
   ];
@@ -223,12 +225,7 @@ export function taskVariants(task: TaskSnapshot): Variants {
   const time = [segment(task.elapsedMs === null ? "—" : formatDuration(task.elapsedMs))];
   const { speed } = task;
   const hasSpeed = speed !== null && Number.isFinite(speed) && (task.state === "working" || task.state === "done");
-  const rate = [
-    segment(
-      hasSpeed ? `${Math.round(speed)} tok/s${task.state === "done" ? " avg" : ""}` : "—",
-      hasSpeed ? "text" : "dim",
-    ),
-  ];
+  const rate = [segment(hasSpeed ? `${Math.round(speed)} tok/s` : "—", hasSpeed ? "text" : "dim")];
   return [
     variant(joinGroups([status, joinGroups([time, rate], " · ")])),
     variant(joinGroups([status, time])),

@@ -113,6 +113,7 @@ export default function statusline(pi: ExtensionAPI): void {
             {
               git: git.snapshot,
               ...getStats(ctx),
+              provider: ctx.model?.provider ?? "",
               model: ctx.model?.id ?? "no model",
               thinking: ctx.thinkingLevel ?? pi.getThinkingLevel(),
               task: snapshot,
