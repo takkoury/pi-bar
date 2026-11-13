@@ -101,12 +101,14 @@ export function formatNumber(value: number): string {
   return `${Number((value / 1_000_000).toFixed(1))}M`;
 }
 
-export function formatDuration(ms: number): string {
+export function formatDuration(ms: number, style: "clock" | "units" = "clock"): string {
   const seconds = Math.floor(ms / 1000);
-  const parts = [seconds % 60];
-  if (seconds >= 60) parts.unshift(Math.floor(seconds / 60) % 60);
-  if (seconds >= 3600) parts.unshift(Math.floor(seconds / 3600));
-  return parts.map((part) => String(part).padStart(2, "0")).join(":");
+  const parts: [number, string][] = [[seconds % 60, "s"]];
+  if (seconds >= 60) parts.unshift([Math.floor(seconds / 60) % 60, "m"]);
+  if (seconds >= 3600) parts.unshift([Math.floor(seconds / 3600), "h"]);
+  return parts
+    .map(([value, unit]) => String(value).padStart(2, "0") + (style === "units" ? unit : ""))
+    .join(style === "units" ? "" : ":");
 }
 
 export const contextTone = (percent: number): Tone => (percent >= 90 ? "red" : percent >= 70 ? "amber" : "blue");
@@ -172,14 +174,14 @@ function gitVariants(data: GitSnapshot): Variants {
 
 function modelVariants(data: FooterData): Variants {
   const provider = cleanText(data.provider);
-  const prefix = provider ? `${provider}/` : "";
+  const prefix = provider ? `[${provider}] ` : "";
   const model = cleanText(data.model || "no model");
   const short = model.replace(/^claude-/, "");
-  const level = [segment(" · ", "separator"), segment(cleanText(data.thinking), "dim")];
+  const level = segment(` [${cleanText(data.thinking)}]`, "dim");
   return [
-    variant([segment(prefix + model, "dim"), ...level]),
-    variant([segment(prefix + short, "dim"), ...level]),
-    variant([segment(prefix + truncateToWidth(short, 22, "…"), "dim")]),
+    variant([segment(prefix + model, "dim"), level]),
+    variant([segment(prefix + short, "dim"), level]),
+    variant([segment(prefix + truncateToWidth(short, 22, "…"), "dim"), level]),
   ];
 }
 
@@ -193,15 +195,15 @@ function usageVariants(data: FooterData): Variants {
     const filled = known ? Math.round((Math.max(0, Math.min(100, percent)) * cells) / 100) : 0;
     const glyph = data.meter === "line" ? "━" : "▰";
     return [
-      segment(`${known ? formatNumber(tokens) : "?"}/${validCapacity ? formatNumber(capacity) : "?"}`, tone),
-      segment(" "),
+      segment(known ? formatNumber(tokens) : "?", tone),
       segment(glyph.repeat(filled), tone),
       segment(glyph.repeat(cells - filled), "track"),
+      segment(` ${validCapacity ? formatNumber(capacity) : "?"} ${known ? Math.round(percent) : "?"}%`, tone),
     ];
   };
   const io = [
     segment(`↑${formatNumber(data.usage.input)}`, "lavender"),
-    segment(" · ", "separator"),
+    segment(" "),
     segment(`↓${formatNumber(data.usage.output)}`, "lavender"),
   ];
   const cache = data.usage.cache === null ? [] : [segment(`cache ${Math.round(data.usage.cache)}%`, "green")];
@@ -222,12 +224,17 @@ export function taskVariants(task: TaskSnapshot): Variants {
   const [icon, tone] = taskStyles[task.state];
   const status = [{ ...segment(icon, tone), pulse: task.state === "working" }, segment(` ${task.state}`, tone)];
   if (task.state === "idle") return [variant(status)];
-  const time = [segment(task.elapsedMs === null ? "—" : formatDuration(task.elapsedMs))];
+  const time = [
+    segment(
+      task.elapsedMs === null ? "—" : formatDuration(task.elapsedMs, task.state === "working" ? "clock" : "units"),
+      "dim",
+    ),
+  ];
   const { speed } = task;
   const hasSpeed = speed !== null && Number.isFinite(speed) && (task.state === "working" || task.state === "done");
-  const rate = [segment(hasSpeed ? `${Math.round(speed)} tok/s` : "—", hasSpeed ? "text" : "dim")];
+  const rate = [segment(hasSpeed ? `${Math.round(speed)}tk/s` : "—", hasSpeed ? "lavender" : "dim")];
   return [
-    variant(joinGroups([status, joinGroups([time, rate], " · ")])),
+    variant(joinGroups([status, joinGroups([time, rate], " ")])),
     variant(joinGroups([status, time])),
     variant(status),
   ];

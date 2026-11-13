@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { styleText, visibleWidth } from "@earendil-works/pi-tui";
+import { parseColor, styleText, visibleWidth } from "@earendil-works/pi-tui";
 import {
   cleanText,
   contextTone,
@@ -26,10 +26,26 @@ test("wide layout uses consistent separators, provider prefix and compact metric
   const data = example();
   const [top, bottom] = layoutFooter(data, 160);
   assert.equal(plain(top.left), "atlas │ main │ 3 modified · 1 staged · 2 untracked │ 2 ahead");
-  assert.equal(plain(top.right), "openai-codex/gpt-5.4 · high");
-  assert.equal(plain(bottom.left), "182k/500k ▰▰▰▰▰▰▰▰ │ ↑217k · ↓12k │ cache 92% │ $0.050");
-  assert.equal(plain(bottom.right), "● working │ 12 · 42 tok/s");
-  assert.equal(plain(taskVariants({ state: "done", elapsedMs: 48000, speed: 56 })[0].parts), "✓ done │ 48 · 56 tok/s");
+  assert.equal(plain(top.right), "[openai-codex] gpt-5.4 [high]");
+  assert.equal(plain(bottom.left), "182k▰▰▰▰▰▰▰▰ 500k 36% │ ↑217k ↓12k │ cache 92% │ $0.050");
+  assert.equal(plain(bottom.right), "● working │ 12 42tk/s");
+  assert.equal(plain(taskVariants({ state: "done", elapsedMs: 48000, speed: 56 })[0].parts), "✓ done │ 48s 56tk/s");
+});
+
+test("context, model and token totals preserve literal brackets and single spaces", () => {
+  const data = example();
+  data.context = { tokens: 15000, capacity: 272000 };
+  data.provider = "openai";
+  data.model = "gpt-6-astra";
+  data.thinking = "low";
+  data.usage.input = 129700;
+  data.usage.output = 35500;
+  const [top, bottom] = layoutFooter(data, 160);
+  assert.equal(plain(top.right), "[openai] gpt-6-astra [low]");
+  // Percentage is calculated from actual usage, not the rounded labels.
+  assert.equal(plain(bottom.left), "15k▰▰▰▰▰▰▰▰ 272k 6% │ ↑129.7k ↓35.5k │ cache 92% │ $0.050");
+  data.context.tokens = 54400;
+  assert.ok(plain(layoutFooter(data, 160)[1].left).startsWith("54.4k▰▰▰▰▰▰▰▰ 272k 20% │ "));
 });
 
 test("all widths, states, palettes and meters render exactly two bounded rows", () => {
@@ -39,6 +55,7 @@ test("all widths, states, palettes and meters render exactly two bounded rows", 
         for (const columns of [0, 1, 2, 4, 8, 15, 20, 30, 40, 60, 80, 100, 120, 160, 240]) {
           const data = example();
           data.task.state = state;
+          data.task.elapsedMs = 5415000;
           data.meter = meter;
           data.git.repo = "仓库-🧪-e\u0301-with-a-long-name";
           data.git.branch = "feature/very-long-branch-for-terminal-width-check";
@@ -69,11 +86,13 @@ test("context thresholds, unknown context, and out-of-capacity values", () => {
     assert.equal(contextTone(percent), tone);
     const data = example();
     data.context.tokens = percent * 5000;
-    assert.equal(layoutFooter(data, 160)[1].left[0].tone, tone);
+    const parts = layoutFooter(data, 160)[1].left;
+    assert.equal(parts[0].tone, tone);
+    assert.ok(plain(parts).startsWith(`${formatNumber(percent * 5000)}▰▰▰▰▰▰▰▰ 500k ${Math.round(percent)}% │ `));
   }
   const data = example();
   data.context.tokens = null;
-  assert.ok(plain(layoutFooter(data, 160)[1].left).startsWith("?/500k "));
+  assert.ok(plain(layoutFooter(data, 160)[1].left).startsWith("?▰▰▰▰▰▰▰▰ 500k ?% │ "));
   assert.equal(layoutFooter(data, 160)[1].left[0].tone, "dim");
 });
 
@@ -103,7 +122,7 @@ test("no terminal control injection through repo/provider/model names", () => {
   data.model = "\x1b]0;evil title\x07model\tname";
   const lines = renderFooter(data, 160, theme("dark")).map(stripVTControlCharacters);
   assert.ok(lines[0].includes("evil repo"));
-  assert.ok(lines[0].includes("provider name/"));
+  assert.ok(lines[0].includes("[provider name] "));
   assert.ok(lines[0].includes("model name"));
   assert.ok(!lines.some((line) => /[\n\t\x1b]/.test(line)));
   assert.equal(cleanText("a\u202eb\r\nc"), "a b c");
@@ -117,7 +136,8 @@ test("compact model labels retain the provider prefix", () => {
   for (const columns of [60, 80, 100, 120, 160, 240]) {
     const label = plain(layoutFooter(data, columns)[0].right);
     if (!label) continue;
-    assert.ok(label.startsWith("anthropic/"), label);
+    assert.ok(label.startsWith("[anthropic] "), label);
+    assert.ok(label.endsWith(" [high]"), label);
     if (label.includes("…")) shortened = true;
   }
   assert.equal(shortened, true);
@@ -157,12 +177,53 @@ test("invalid context values are displayed as unknown", () => {
   for (const tokens of [NaN, Infinity, -1]) {
     const data = example();
     data.context.tokens = tokens;
-    assert.ok(plain(layoutFooter(data, 160)[1].left).startsWith("?/500k "));
+    assert.ok(plain(layoutFooter(data, 160)[1].left).startsWith("?▰▰▰▰▰▰▰▰ 500k ?% │ "));
   }
   for (const capacity of [NaN, Infinity, -1, 0]) {
     const data = example();
     data.context.capacity = capacity;
-    assert.ok(plain(layoutFooter(data, 160)[1].left).startsWith("?/? "));
+    assert.ok(plain(layoutFooter(data, 160)[1].left).startsWith("?▰▰▰▰▰▰▰▰ ? ?% │ "));
+  }
+});
+
+test("stopped task metrics use unit suffixes and one space before compact throughput", () => {
+  for (const [elapsedMs, clock, units] of [
+    [5000, "05", "05s"],
+    [30000, "30", "30s"],
+    [133000, "02:13", "02m13s"],
+    [324000, "05:24", "05m24s"],
+    [5415000, "01:30:15", "01h30m15s"],
+  ] as const) {
+    assert.equal(
+      plain(taskVariants({ state: "working", elapsedMs, speed: 70 })[0].parts),
+      `● working │ ${clock} 70tk/s`,
+    );
+    assert.equal(plain(taskVariants({ state: "done", elapsedMs, speed: 105 })[0].parts), `✓ done │ ${units} 105tk/s`);
+    assert.equal(plain(taskVariants({ state: "aborted", elapsedMs, speed: 105 })[0].parts), `■ aborted │ ${units} —`);
+    assert.equal(plain(taskVariants({ state: "error", elapsedMs, speed: 105 })[0].parts), `× error │ ${units} —`);
+  }
+  assert.equal(plain(taskVariants({ state: "done", elapsedMs: null, speed: null })[0].parts), "✓ done │ — —");
+  assert.equal(plain(taskVariants({ state: "idle", elapsedMs: null, speed: null })[0].parts), "○ idle");
+});
+
+test("task time and throughput have distinct colors in both themes; unavailable rates stay dim", () => {
+  for (const [appearance, timeColor, speedColor] of [
+    ["dark", "#8993a2", "#c2abe7"],
+    ["light", "#637286", "#77549b"],
+  ] as const) {
+    const palette = theme(appearance);
+    for (const state of ["working", "done", "aborted", "error"] as const) {
+      for (const speed of [null, 0, 70]) {
+        const data = example();
+        data.task = { state, elapsedMs: 324000, speed };
+        const row = renderFooter(data, 160, palette)[1];
+        const time = state === "working" ? "05:24" : "05m24s";
+        const hasSpeed = speed !== null && (state === "working" || state === "done");
+        const rate = hasSpeed ? `${speed}tk/s` : "—";
+        assert.ok(row.includes(palette.style(time, { fg: parseColor(timeColor), dim: false })));
+        assert.ok(row.includes(palette.style(rate, { fg: parseColor(hasSpeed ? speedColor : timeColor), dim: false })));
+      }
+    }
   }
 });
 
@@ -197,5 +258,24 @@ test("duration uses zero-padded clock fields and omits only unused leading field
     [360000000, "100:00:00"],
   ] as const) {
     assert.equal(formatDuration(ms), expected);
+  }
+});
+
+test("stopped duration has no spaces and keeps zero fields below the highest used unit", () => {
+  for (const [ms, expected] of [
+    [0, "00s"],
+    [999, "00s"],
+    [5000, "05s"],
+    [60000, "01m00s"],
+    [133000, "02m13s"],
+    [324000, "05m24s"],
+    [3599999, "59m59s"],
+    [3600000, "01h00m00s"],
+    [3605000, "01h00m05s"],
+    [5415000, "01h30m15s"],
+    [86400000, "24h00m00s"],
+    [360000000, "100h00m00s"],
+  ] as const) {
+    assert.equal(formatDuration(ms, "units"), expected);
   }
 });
