@@ -4,7 +4,17 @@ import { parseColor, truncateToWidth, visibleWidth } from "@earendil-works/pi-tu
 import type { GitSnapshot } from "./git.ts";
 import type { TaskSnapshot, UsageTotals } from "./metrics.ts";
 
-export type Tone = "text" | "dim" | "separator" | "blue" | "lavender" | "green" | "gold" | "amber" | "red" | "track";
+export type Tone =
+  | "text"
+  | "dim"
+  | "separator"
+  | "blue"
+  | "lavender"
+  | "green"
+  | "amber"
+  | "red"
+  | "track"
+  | `thinking-${"minimal" | "low" | "medium" | "high" | "xhigh" | "max"}`;
 export interface Segment {
   text: string;
   tone: Tone;
@@ -42,33 +52,53 @@ const taskStyles = {
   idle: ["○", "dim"],
 } as const satisfies Record<TaskSnapshot["state"], readonly [string, Tone]>;
 
-// Approved prototype palette. Background stays owned by the terminal/pi theme.
+const thinkingTones = new Map<string, Tone>([
+  ["minimal", "thinking-minimal"],
+  ["low", "thinking-low"],
+  ["medium", "thinking-medium"],
+  ["high", "thinking-high"],
+  ["xhigh", "thinking-xhigh"],
+  ["max", "thinking-max"],
+]);
+
+// Blue encodes capacity, purple computation; green/amber/red encode status.
+// Background stays owned by the terminal/pi theme.
 const palettes = {
   dark: {
     text: "#e5e8ee",
-    dim: "#8993a2",
-    separator: "#747e8b",
+    dim: "#9aa6b5",
+    separator: "#667181",
     blue: "#98bce5",
     lavender: "#c2abe7",
     green: "#9ac9b3",
-    gold: "#e6c891",
     amber: "#e3b574",
     red: "#e68f91",
     track: "#444d5a",
+    "thinking-minimal": "#aaa4b3",
+    "thinking-low": "#b4a6c7",
+    "thinking-medium": "#bba5da",
+    "thinking-high": "#c5a3ed",
+    "thinking-xhigh": "#d0a6ff",
+    "thinking-max": "#e0baff",
   },
   light: {
     text: "#293445",
-    dim: "#637286",
+    dim: "#5e6c7c",
     separator: "#7c899a",
     blue: "#376ba2",
     lavender: "#77549b",
     green: "#34715c",
-    gold: "#876322",
     amber: "#996019",
     red: "#b2434e",
     track: "#c3ceda",
+    "thinking-minimal": "#706779",
+    "thinking-low": "#705c86",
+    "thinking-medium": "#704e99",
+    "thinking-high": "#6d3dad",
+    "thinking-xhigh": "#6627bf",
+    "thinking-max": "#5912cc",
   },
-};
+} satisfies Record<"dark" | "light", Record<Tone, string>>;
 const colors = Object.fromEntries(
   Object.entries(palettes).map(([appearance, palette]) => [
     appearance,
@@ -119,36 +149,34 @@ function gitVariants(data: GitSnapshot): Variants {
   const identity = (short = false): Parts =>
     joinGroups([
       [segment(short ? truncateToWidth(repo, 9, "…") : repo)],
-      ...(data.kind === "repo" ? [[segment(short ? truncateToWidth(branch, 14, "…") : branch, "lavender")]] : []),
+      ...(data.kind === "repo" ? [[segment(short ? truncateToWidth(branch, 14, "…") : branch)]] : []),
     ]);
   if (data.kind !== "repo") {
     const label =
       data.kind === "loading" ? "checking Git…" : data.kind === "not-repo" ? "not a Git repo" : "Git unavailable";
-    return [
-      variant(joinGroups([identity(), [segment(label, data.kind === "error" ? "amber" : "dim")]])),
-      variant([segment(label, "dim")]),
-    ];
+    const tone = data.kind === "error" ? "amber" : "dim";
+    return [variant(joinGroups([identity(), [segment(label, tone)]])), variant([segment(label, tone)])];
   }
 
   const dirty: Parts[] = [];
   if (data.conflicts) dirty.push(metric(data.conflicts, "conflicts", "red"));
   if (data.modified) dirty.push(metric(data.modified, "modified", "amber"));
   if (data.staged) dirty.push(metric(data.staged, "staged", "green"));
-  if (data.untracked) dirty.push(metric(data.untracked, "untracked", "dim"));
-  if (!dirty.length) dirty.push([segment("clean", "green")]);
+  if (data.untracked) dirty.push(metric(data.untracked, "untracked", "amber"));
+  if (!dirty.length) dirty.push([segment("clean", "dim")]);
   const compactDirty = data.conflicts
     ? metric(data.conflicts, "conflicts", "red")
     : data.dirtyFiles
       ? metric(data.dirtyFiles, "dirty", "amber")
-      : [segment("clean", "green")];
+      : [segment("clean", "dim")];
 
   const difference: Parts[] = [];
   if (!data.upstream) difference.push([segment("no upstream", "dim")]);
   else if (data.ahead === null || data.behind === null) difference.push([segment("upstream unknown", "amber")]);
   else {
-    if (data.ahead) difference.push(metric(data.ahead, "ahead", "green"));
+    if (data.ahead) difference.push(metric(data.ahead, "ahead", "blue"));
     if (data.behind) difference.push(metric(data.behind, "behind", "amber"));
-    if (!data.ahead && !data.behind) difference.push([segment("synced", "green")]);
+    if (!data.ahead && !data.behind) difference.push([segment("synced", "dim")]);
   }
   const remote: Parts =
     !data.upstream || data.remoteState === "fresh"
@@ -167,7 +195,7 @@ function gitVariants(data: GitSnapshot): Variants {
     variant(joinGroups([shortIdentity, local, compactDirty, comparison])),
     variant(joinGroups([shortIdentity, priority, ...noUpstream]), true),
     // At tiny widths, preserve warnings before spending columns on a long repository name.
-    variant(joinGroups([priority, ...noUpstream, [segment(truncateToWidth(branch, 10, "…"), "lavender")]]), true),
+    variant(joinGroups([priority, ...noUpstream, [segment(truncateToWidth(branch, 10, "…"))]]), true),
     variant(priority, true),
   ];
 }
@@ -177,12 +205,11 @@ function modelVariants(data: FooterData): Variants {
   const prefix = provider ? `[${provider}] ` : "";
   const model = cleanText(data.model || "no model");
   const short = model.replace(/^claude-/, "");
-  const level = segment(` [${cleanText(data.thinking)}]`, "dim");
-  return [
-    variant([segment(prefix + model, "dim"), level]),
-    variant([segment(prefix + short, "dim"), level]),
-    variant([segment(prefix + truncateToWidth(short, 22, "…"), "dim"), level]),
-  ];
+  const thinking = cleanText(data.thinking);
+  const level = [segment(" [", "dim"), segment(thinking, thinkingTones.get(thinking) ?? "dim"), segment("]", "dim")];
+  const label = (name: string): Variant =>
+    variant([segment(prefix, "dim"), segment(name, model === "no model" ? "dim" : "text"), ...level]);
+  return [label(model), label(short), label(truncateToWidth(short, 22, "…"))];
 }
 
 function usageVariants(data: FooterData): Variants {
@@ -198,7 +225,8 @@ function usageVariants(data: FooterData): Variants {
       segment(known ? formatNumber(tokens) : "?", tone),
       segment(glyph.repeat(filled), tone),
       segment(glyph.repeat(cells - filled), "track"),
-      segment(` ${validCapacity ? formatNumber(capacity) : "?"} ${known ? Math.round(percent) : "?"}%`, tone),
+      segment(` ${validCapacity ? formatNumber(capacity) : "?"}`, "dim"),
+      segment(` ${known ? Math.round(percent) : "?"}%`, tone),
     ];
   };
   const io = [
@@ -206,8 +234,9 @@ function usageVariants(data: FooterData): Variants {
     segment(" "),
     segment(`↓${formatNumber(data.usage.output)}`, "lavender"),
   ];
-  const cache = data.usage.cache === null ? [] : [segment(`cache ${Math.round(data.usage.cache)}%`, "green")];
-  const cost = [segment(`$${data.usage.cost.toFixed(3)}`, "gold")];
+  const cache =
+    data.usage.cache === null ? [] : [segment("cache ", "dim"), segment(`${Math.round(data.usage.cache)}%`)];
+  const cost = [segment(`$${data.usage.cost.toFixed(3)}`)];
   const fullSize = data.meter === "line" ? 12 : 8;
   const compactSize = data.meter === "line" ? 8 : 6;
   return [

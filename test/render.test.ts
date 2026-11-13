@@ -22,6 +22,51 @@ const theme = (appearance: "dark" | "light") =>
       styleText(text, options as Parameters<typeof styleText>[1], "truecolor"),
   }) as Theme;
 
+const palettes = {
+  dark: {
+    background: "#1c1e22",
+    text: "#e5e8ee",
+    dim: "#9aa6b5",
+    separator: "#667181",
+    track: "#444d5a",
+    blue: "#98bce5",
+    lavender: "#c2abe7",
+    green: "#9ac9b3",
+    amber: "#e3b574",
+    red: "#e68f91",
+  },
+  light: {
+    background: "#f9fafb",
+    text: "#293445",
+    dim: "#5e6c7c",
+    separator: "#7c899a",
+    track: "#c3ceda",
+    blue: "#376ba2",
+    lavender: "#77549b",
+    green: "#34715c",
+    amber: "#996019",
+    red: "#b2434e",
+  },
+};
+const expectColor = (row: string, text: string, hex: string) => {
+  assert.ok(
+    row.includes(styleText(text, { fg: parseColor(hex), dim: false }, "truecolor")),
+    `${JSON.stringify(text)}: ${hex}`,
+  );
+};
+const luminance = (hex: string) => {
+  const linear = [1, 3, 5].map((offset) => {
+    const value = parseInt(hex.slice(offset, offset + 2), 16) / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
+};
+const contrast = (foreground: string, background: string) => {
+  const a = luminance(foreground);
+  const b = luminance(background);
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+};
+
 test("wide layout uses consistent separators, provider prefix and compact metrics", () => {
   const data = example();
   const [top, bottom] = layoutFooter(data, 160);
@@ -115,15 +160,16 @@ test("Git warnings and unique dirty count are protected as space shrinks", () =>
   assert.match(plain(layoutFooter(data, 120)[0].left), /upstream unknown/);
 });
 
-test("no terminal control injection through repo/provider/model names", () => {
+test("no terminal control injection through repo/provider/model/thinking labels", () => {
   const data = example();
   data.git.repo = "evil\x1b[2J\nrepo";
   data.provider = "\x1b[31mprovider\x1b[0m\nname";
   data.model = "\x1b]0;evil title\x07model\tname";
+  data.thinking = "\x1b[31mhigh\x1b[0m\n";
   const lines = renderFooter(data, 160, theme("dark")).map(stripVTControlCharacters);
   assert.ok(lines[0].includes("evil repo"));
   assert.ok(lines[0].includes("[provider name] "));
-  assert.ok(lines[0].includes("model name"));
+  assert.ok(lines[0].includes("model name [high]"));
   assert.ok(!lines.some((line) => /[\n\t\x1b]/.test(line)));
   assert.equal(cleanText("a\u202eb\r\nc"), "a b c");
 });
@@ -208,8 +254,8 @@ test("stopped task metrics use unit suffixes and one space before compact throug
 
 test("task time and throughput have distinct colors in both themes; unavailable rates stay dim", () => {
   for (const [appearance, timeColor, speedColor] of [
-    ["dark", "#8993a2", "#c2abe7"],
-    ["light", "#637286", "#77549b"],
+    ["dark", "#9aa6b5", "#c2abe7"],
+    ["light", "#5e6c7c", "#77549b"],
   ] as const) {
     const palette = theme(appearance);
     for (const state of ["working", "done", "aborted", "error"] as const) {
@@ -224,6 +270,141 @@ test("task time and throughput have distinct colors in both themes; unavailable 
         assert.ok(row.includes(palette.style(rate, { fg: parseColor(hasSpeed ? speedColor : timeColor), dim: false })));
       }
     }
+  }
+});
+
+test("Git identities stay neutral while actionable states retain semantic colors at all sizes", () => {
+  for (const appearance of ["dark", "light"] as const) {
+    const palette = palettes[appearance];
+    const data = example();
+    data.git.behind = 1;
+    let row = renderFooter(data, 240, theme(appearance))[0];
+    for (const [text, tone] of [
+      ["atlas", "text"],
+      ["main", "text"],
+      [" │ ", "separator"],
+      [" · ", "separator"],
+      ["3 modified", "amber"],
+      ["1 staged", "green"],
+      ["2 untracked", "amber"],
+      ["2 ahead", "blue"],
+      ["1 behind", "amber"],
+    ] as const)
+      expectColor(row, text, palette[tone]);
+
+    data.git.conflicts = 2;
+    data.git.localStale = true;
+    data.git.remoteState = "stale";
+    row = renderFooter(data, 240, theme(appearance))[0];
+    expectColor(row, "2 conflicts", palette.red);
+    expectColor(row, "status stale", palette.amber);
+    expectColor(row, "remote stale", palette.amber);
+    for (const columns of [30, 60, 80, 160]) {
+      const parts = layoutFooter(data, columns)[0].left;
+      for (const part of parts) {
+        if (part.text === "main") assert.equal(part.tone, "text");
+        if (part.text === "2 conflicts") assert.equal(part.tone, "red");
+        if (part.text.endsWith("stale")) assert.equal(part.tone, "amber");
+      }
+    }
+
+    Object.assign(data.git, {
+      conflicts: 0,
+      modified: 0,
+      staged: 0,
+      untracked: 0,
+      dirtyFiles: 0,
+      ahead: 0,
+      behind: 0,
+      localStale: false,
+      remoteState: "fresh",
+    });
+    row = renderFooter(data, 160, theme(appearance))[0];
+    expectColor(row, "clean", palette.dim);
+    expectColor(row, "synced", palette.dim);
+    data.git.kind = "error";
+    for (const columns of [15, 160]) {
+      expectColor(renderFooter(data, columns, theme(appearance))[0], "Git unavailable", palette.amber);
+    }
+  }
+});
+
+test("capacity limits and ordinary metrics stay neutral while context usage follows thresholds", () => {
+  for (const appearance of ["dark", "light"] as const) {
+    const palette = palettes[appearance];
+    for (const key of ["text", "dim", "blue", "lavender", "green", "amber", "red"] as const) {
+      assert.ok(contrast(palette[key], palette.background) >= 4.5, `${appearance}: ${key}`);
+    }
+    for (const meter of ["cells", "line"] as const) {
+      for (const percent of [0, 69.9, 70, 89.9, 90, 110, null]) {
+        const data = example();
+        data.meter = meter;
+        data.context.tokens = percent === null ? null : percent * 5000;
+        const tone = percent === null ? "dim" : percent >= 90 ? "red" : percent >= 70 ? "amber" : "blue";
+        const parts = layoutFooter(data, 160)[1].left;
+        assert.deepEqual(
+          parts.slice(0, 5).map((part) => part.tone),
+          [tone, tone, "track", "dim", tone],
+        );
+        const row = renderFooter(data, 160, theme(appearance))[1];
+        for (const part of parts.slice(0, 3)) {
+          if (part.text) expectColor(row, part.text, part.tone === "track" ? palette.track : palette[tone]);
+        }
+        expectColor(row, " 500k", palette.dim);
+        expectColor(row, ` ${percent === null ? "?" : Math.round(percent)}%`, palette[tone]);
+        expectColor(row, "↑217k", palette.lavender);
+        expectColor(row, "↓12k", palette.lavender);
+        expectColor(row, "cache ", palette.dim);
+        expectColor(row, "92%", palette.text);
+        expectColor(row, "$0.050", palette.text);
+      }
+    }
+  }
+});
+
+test("thinking levels use the approved progressive purple ramp with neutral brackets in both themes", () => {
+  const levels = [
+    ["off", "#9aa6b5", "#5e6c7c"],
+    ["minimal", "#aaa4b3", "#706779"],
+    ["low", "#b4a6c7", "#705c86"],
+    ["medium", "#bba5da", "#704e99"],
+    ["high", "#c5a3ed", "#6d3dad"],
+    ["xhigh", "#d0a6ff", "#6627bf"],
+    ["max", "#e0baff", "#5912cc"],
+  ] as const;
+  for (const appearance of ["dark", "light"] as const) {
+    const palette = palettes[appearance];
+    const data = example();
+    data.provider = "anthropic";
+    data.model = "claude-opus-4-6-with-an-extra-long-model-name";
+    let previousContrast = 0;
+    for (const [level, dark, light] of levels) {
+      const hex = appearance === "dark" ? dark : light;
+      const ratio = contrast(hex, palette.background);
+      assert.ok(ratio >= 4.5 && ratio > previousContrast, `${appearance}: ${level}`);
+      previousContrast = ratio;
+      data.thinking = level;
+      for (const columns of [80, 100, 160, 240]) {
+        const parts = layoutFooter(data, columns)[0].right;
+        assert.ok(parts.length > 0);
+        const row = renderFooter(data, columns, theme(appearance))[0];
+        expectColor(row, "[anthropic] ", palette.dim);
+        expectColor(row, parts[1].text, palette.text);
+        expectColor(row, " [", palette.dim);
+        expectColor(row, level, hex);
+        expectColor(row, "]", palette.dim);
+        assert.equal(row, renderFooter(data, columns, theme(appearance), true)[0]);
+        assert.ok(plain(parts).endsWith(` [${level}]`));
+        assert.ok(visibleWidth(row) <= columns);
+      }
+    }
+    for (const level of ["unknown", "constructor", "__proto__", "toString"]) {
+      data.thinking = level;
+      expectColor(renderFooter(data, 240, theme(appearance))[0], level, palette.dim);
+    }
+    data.provider = "";
+    data.model = "";
+    expectColor(renderFooter(data, 160, theme(appearance))[0], "no model", palette.dim);
   }
 });
 
