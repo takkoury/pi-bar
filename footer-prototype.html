@@ -1,0 +1,567 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>pi-bar / Footer prototype</title>
+  <style>
+    /* Design direction: an inspection bench, not a dashboard.
+       The terminal is the subject; its two rows are the only hero.
+       Graphite #1c1e22, chalk #e5e8ee, slate #929ba9, ice #98bce5,
+       amber #e3b574, coral #e68f91. Color identifies categories and state;
+       vertical rules separate groups, middle dots separate related metrics.
+       Segoe UI for the review controls, Cascadia Mono for the real component.
+       No pills, gradients or pixel-only effects inside the footer. */
+    :root {
+      color-scheme: light;
+      --page: #e8edf2;
+      --ink: #283441;
+      --muted: #5d6d7d;
+      --line: #c8d1da;
+      --control: #f6f8fa;
+      --focus: #426990;
+      --mono: "Cascadia Mono", "Cascadia Code", Consolas, "SFMono-Regular", "Liberation Mono", monospace;
+      --sans: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.5 var(--sans); }
+    button, select, input { font: inherit; }
+    button, select { color: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: default; opacity: .4; }
+    button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
+    button { -webkit-tap-highlight-color: transparent; }
+    .page { max-width: 1456px; padding: 36px 48px 24px; margin: 0 auto; }
+    .masthead { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
+    .wordmark { display: flex; align-items: baseline; gap: 12px; }
+    .wordmark strong { font-size: 23px; line-height: 1; font-weight: 650; letter-spacing: -.06em; }
+    .wordmark span { color: var(--muted); font-size: 13px; }
+    .prototype-note { font-size: 12px; color: var(--muted); }
+    .heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin: 40px 0 21px; }
+    h1 { margin: 0 0 5px; font-size: 34px; line-height: 1.2; font-weight: 550; letter-spacing: -.045em; }
+    .heading p { color: var(--muted); margin: 0; font-size: 14px; }
+    .view-switch { display: inline-flex; padding: 3px; background: #dbe2e9; border-radius: 7px; flex-shrink: 0; }
+    .view-switch button { border: 0; border-radius: 4px; padding: 7px 13px; background: transparent; color: var(--muted); font-size: 12px; }
+    .view-switch button[aria-pressed="true"] { color: var(--ink); background: #f9fbfd; box-shadow: 0 1px 2px #233b5218; }
+    .terminal-stage { min-width: 0; }
+    .terminal {
+      --terminal: #1c1e22;
+      --term-header: #25282e;
+      --term-text: #e5e8ee;
+      --term-label: #a0a7b3;
+      --term-dim: #8993a2;
+      --term-rule: #3a3f48;
+      --term-branch: #c2abe7;
+      --term-good: #9ac9b3;
+      --term-tokens: #c2abe7;
+      --term-cost: #e6c891;
+      --term-untracked: #b2bfd3;
+      --term-separator: #747e8b;
+      --context-ok: #98bce5;
+      --warning: #e3b574;
+      --danger: #e68f91;
+      --track: #444d5a;
+      width: min(100%, var(--terminal-width, 1150px));
+      background: var(--terminal); color: var(--term-text); border: 1px solid var(--term-rule);
+      border-radius: 8px; overflow: hidden; box-shadow: 0 14px 36px -18px #172b4460;
+      font: 15px/1.8 var(--mono); font-variant-numeric: tabular-nums; font-variant-ligatures: none;
+      color-scheme: dark;
+    }
+    .terminal[data-theme="slate"] {
+      --terminal: #19232e; --term-header: #23303e; --term-rule: #3a4c60;
+      --term-text: #e3eaf2; --term-label: #a1afbf; --term-dim: #8b9eaf;
+      --term-branch: #c2abe7; --term-separator: #7d8fa2; --track: #43586d;
+    }
+    .terminal[data-theme="light"] {
+      color-scheme: light;
+      --terminal: #f9fafb; --term-header: #f0f2f5; --term-rule: #cbd2db;
+      --term-text: #293445; --term-label: #59687a; --term-dim: #637286;
+      --term-branch: #77549b; --term-good: #34715c;
+      --term-tokens: #77549b; --term-cost: #876322; --term-untracked: #4d637e; --term-separator: #7c899a;
+      --context-ok: #376ba2; --warning: #996019; --danger: #b2434e; --track: #c3ceda;
+    }
+    .terminal-header { display: flex; align-items: center; gap: 14px; padding: 10px 24px; background: var(--term-header); font: 11px/1.5 var(--mono); }
+    .terminal-title { color: var(--term-label); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+    .terminal-pi { color: var(--term-text); font-weight: 600; }
+    .terminal-columns { color: var(--term-dim); white-space: nowrap; }
+    .terminal-main { margin: 25px 24px 20px; font-size: 12px; max-width: 74ch; }
+    .message-user { margin: 0 0 20px; color: var(--term-text); }
+    .message-assistant { margin: 0; color: var(--term-label); }
+    .tool-block { margin-top: 19px; padding-left: 14px; border-left: 2px solid var(--term-rule); }
+    .tool-command { color: var(--term-label); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tool-result { color: var(--term-dim); margin: 6px 0 0; font: inherit; overflow: hidden; }
+    .run-status { color: var(--term-dim); margin-top: 20px; }
+    .run-status::before { content: "●"; padding-right: 9px; color: var(--term-good); font-size: 9px; }
+    .focus-view .terminal-main { display: none; }
+    .editor { margin: 24px 24px 0; padding: 13px 0; color: var(--term-dim); border-bottom: 1px solid var(--term-rule); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .editor-prompt { color: var(--term-label); margin-right: 14px; }
+    .editor-caret { display: inline-block; vertical-align: -2px; width: 7px; height: 14px; margin-right: 8px; background: var(--term-rule); }
+    .footer { margin: 0 24px; padding: 17px 0 20px; }
+    .footer-row { display: flex; justify-content: space-between; align-items: baseline; min-height: 27px; white-space: pre; }
+    .footer-left { flex: 0 1 auto; min-width: 0; overflow: hidden; }
+    .footer-right { flex-shrink: 0; min-width: 0; padding-left: 4ch; margin-left: auto; }
+    .repo { color: var(--term-text); font-weight: 600; }
+    .branch { color: var(--term-branch); }
+    .label { color: var(--term-label); }
+    .number { color: var(--term-text); }
+    .dim { color: var(--term-dim); }
+    .separator { color: var(--term-separator); }
+    .good, .cache { color: var(--term-good); }
+    .git-modified { color: var(--warning); }
+    .git-untracked { color: var(--term-untracked); }
+    .tokens { color: var(--term-tokens); }
+    .cost { color: var(--term-cost); }
+    .context-value { color: var(--context-ok); font-weight: 600; }
+    .context-bar { font-weight: 400; }
+    .bar-fill { color: var(--context-ok); }
+    .bar-empty { color: var(--track); }
+    .model-name { color: var(--term-branch); }
+    .eff-number { color: var(--term-text); }
+    .task-working { color: var(--context-ok); }
+    .task-marker { display: inline-block; width: 1ch; text-align: center; }
+    .task-pulse { animation: task-pulse 1.8s ease-in-out infinite; }
+    @keyframes task-pulse { 50% { opacity: .4; } }
+    .warning { color: var(--warning); }
+    .error { color: var(--danger); }
+    .show-regions .footer-left { outline: 1px dashed var(--track); outline-offset: 1px; }
+    .show-regions .footer-right { outline: 1px dashed var(--track); outline-offset: 1px; }
+    .preview-caption { margin: 12px 0 0; display: flex; justify-content: space-between; gap: 20px; align-items: baseline; min-height: 24px; }
+    .layout-note { color: var(--muted); font-size: 11px; margin: 0; max-width: 90ch; }
+    .text-button { background: transparent; padding: 0; border: 0; color: var(--muted); font-size: 11px; white-space: nowrap; }
+    .text-button:hover, .text-button[aria-pressed="true"] { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+    .task-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 18px; margin-top: 20px; }
+    .task-controls .control-label { color: var(--ink); }
+    .task-hint { color: var(--muted); font-size: 11px; margin: 5px 0 0; }
+    .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 44px; margin-top: 34px; }
+    .control-column { min-width: 0; }
+    .control-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .control-heading h2 { font-size: 15px; font-weight: 600; margin: 0; }
+    .control-heading output { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .slider-wrap { display: flex; align-items: center; gap: 18px; margin-top: 16px; }
+    input[type="range"] { appearance: none; -webkit-appearance: none; height: 18px; background: transparent; min-width: 0; width: 100%; cursor: pointer; margin: 0; }
+    input[type="range"]::-webkit-slider-runnable-track { height: 3px; background: #b9c6d3; border-radius: 2px; }
+    input[type="range"]::-moz-range-track { height: 3px; background: #b9c6d3; border-radius: 2px; }
+    input[type="range"]::-webkit-slider-thumb { appearance: none; width: 14px; height: 14px; margin-top: -5.5px; border: 3px solid var(--page); border-radius: 50%; background: #496987; box-shadow: 0 0 0 1px #496987; }
+    input[type="range"]::-moz-range-thumb { width: 9px; height: 9px; border: 3px solid var(--page); border-radius: 50%; background: #496987; box-shadow: 0 0 0 1px #496987; }
+    .state-presets { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 13px; border-bottom: 1px solid var(--line); }
+    .state-preset { background: transparent; border: 0; border-bottom: 2px solid transparent; padding: 8px 0 12px; margin-bottom: -1px; text-align: left; color: var(--muted); }
+    .state-preset[aria-pressed="true"] { border-bottom-color: #526f8b; color: var(--ink); }
+    .state-preset span { display: block; font-size: 12px; }
+    .state-preset small { display: block; margin-top: 3px; font-size: 10px; color: var(--muted); }
+    .state-preset i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin: 0 6px 1px 0; background: #678eb9; }
+    .state-preset.warn i { background: #ad792d; }
+    .state-preset.high i { background: #b85b63; }
+    .control-pair { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 17px; min-height: 30px; }
+    .control-pair > label, .control-label { font-size: 12px; color: var(--muted); }
+    .control-pair select { padding: 6px 26px 6px 9px; max-width: 70%; border: 1px solid var(--line); background: var(--control); border-radius: 5px; font-size: 12px; }
+    .inline-options { display: inline-flex; gap: 4px; }
+    .inline-options button { border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--muted); padding: 5px 10px; font-size: 12px; }
+    .inline-options button[aria-pressed="true"] { border-color: #b9c6d2; background: #f4f7fa; color: var(--ink); }
+    .inline-options button:hover { color: var(--ink); }
+    .width-control { margin-bottom: 14px; }
+    .width-readout { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .width-buttons { gap: 1px; flex-shrink: 0; }
+    .width-buttons button { padding: 4px 8px; }
+    .palette-button { display: inline-flex; align-items: center; gap: 6px; }
+    .palette-button i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--swatch); border: 1px solid #7890a54d; }
+    .design-notes { margin-top: 34px; padding-top: 19px; border-top: 1px solid var(--line); display: grid; grid-template-columns: 1fr 1fr; gap: 44px; }
+    .design-notes p { margin: 0; font-size: 12px; color: var(--muted); max-width: 63ch; }
+    .design-notes strong { display: block; margin-bottom: 5px; color: var(--ink); font-weight: 600; }
+    details.comparison { margin-top: 22px; }
+    .comparison summary { color: var(--muted); font-size: 12px; cursor: pointer; width: fit-content; }
+    .original { margin: 12px 0; padding: 16px 20px; background: #0b1016; color: #87909a; border-radius: 5px; font: 14px/1.7 var(--mono); overflow-x: auto; }
+    .comparison p { font-size: 11px; color: var(--muted); }
+    .page-footnote { display: flex; justify-content: space-between; gap: 18px; margin-top: 30px; color: var(--muted); font-size: 11px; }
+    .cell-measure { position: absolute; visibility: hidden; pointer-events: none; white-space: pre; font: 15px/1.8 var(--mono); font-variant-ligatures: none; }
+    @media (max-width: 900px) {
+      .page { padding: 28px; }
+      .controls, .design-notes { gap: 26px; }
+      .control-pair { gap: 8px; }
+      .inline-options button { padding-inline: 7px; }
+    }
+    @media (max-width: 640px) {
+      .page { padding: 22px 16px; }
+      .heading { align-items: flex-start; flex-direction: column; margin-top: 28px; gap: 16px; }
+      h1 { font-size: 30px; }
+      .controls, .design-notes { grid-template-columns: 1fr; gap: 26px; }
+      .terminal-header { padding-inline: 15px; }
+      .footer, .editor { margin-inline: 15px; }
+      .terminal-main { margin-inline: 15px; }
+      .terminal, .cell-measure { font-size: 13px; }
+      .footer-row { min-height: 25px; }
+      .preview-caption { gap: 12px; }
+      .page-footnote { flex-direction: column; gap: 4px; }
+      .prototype-note { font-size: 10px; }
+    }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; } }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="masthead">
+      <div class="wordmark"><strong>pi</strong><span>Interface studies</span></div>
+      <span class="prototype-note">Local prototype / revision 6</span>
+    </header>
+    <section aria-labelledby="preview-title">
+      <div class="heading">
+        <div><h1 id="preview-title">pi-bar.</h1><p>Two rows. Clear groups. Context comes first.</p></div>
+        <div class="view-switch" aria-label="Preview view">
+          <button id="footer-only" type="button" aria-pressed="true">Footer only</button>
+          <button id="in-session" type="button" aria-pressed="false">In session</button>
+        </div>
+      </div>
+      <div id="terminal-stage" class="terminal-stage focus-view">
+        <div id="terminal" class="terminal" data-theme="graphite">
+          <div class="terminal-header"><span class="terminal-pi">pi</span><span id="terminal-title" class="terminal-title">D:\projects\pi-bar</span><span id="actual-columns" class="terminal-columns">120 cols</span></div>
+          <div class="terminal-main">
+            <p class="message-user">Check the Git state and refine the two-line footer.</p>
+            <p id="assistant-text" class="message-assistant">I'll check the worktree and upstream before adjusting the layout.</p>
+            <div class="tool-block"><div class="tool-command">$ git status --short --branch</div><pre id="git-output" class="tool-result"></pre></div>
+            <div id="run-status-text" class="run-status">Generating a response…</div>
+          </div>
+          <div class="editor" aria-hidden="true"><span class="editor-prompt">›</span><span class="editor-caret"></span>Ask a follow-up, or / for commands</div>
+          <div id="footer" class="footer" aria-label="Two-line status bar preview">
+            <div class="footer-row"><div id="repo-git" class="footer-left"></div><div id="model-info" class="footer-right"></div></div>
+            <div class="footer-row"><div id="usage-info" class="footer-left"></div><div id="efficiency-info" class="footer-right"></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="preview-caption"><p id="layout-note" class="layout-note" role="status" aria-live="polite"></p><button id="regions" type="button" class="text-button" aria-pressed="false">Show regions</button></div>
+      <div class="task-controls">
+        <span id="task-label" class="control-label">Task state</span>
+        <div class="inline-options" aria-labelledby="task-label">
+          <button type="button" data-task="working" aria-pressed="true">Working</button>
+          <button type="button" data-task="done" aria-pressed="false">Done</button>
+          <button type="button" data-task="aborted" aria-pressed="false">Aborted</button>
+          <button type="button" data-task="error" aria-pressed="false">Error</button>
+        </div>
+      </div>
+      <p id="task-hint" class="task-hint" aria-live="polite">Working: only the marker animates. Timing and speed are sample values.</p>
+    </section>
+
+    <section class="controls" aria-label="Preview controls">
+      <div class="control-column">
+        <div class="control-heading"><h2><label for="context-level">Context pressure</label></h2><output id="context-percentage" for="context-level">36.4%</output></div>
+        <div class="slider-wrap"><input id="context-level" type="range" min="0" max="100" step="0.1" value="36.4" aria-describedby="context-explanation"><button id="reset-context" class="text-button" type="button" disabled>Reset</button></div>
+        <div class="state-presets" aria-label="Try a context state">
+          <button class="state-preset" type="button" data-context="36.4" data-state="normal" aria-pressed="true"><span><i aria-hidden="true"></i>Room to work</span><small>Below 70%</small></button>
+          <button class="state-preset warn" type="button" data-context="76" data-state="warn" aria-pressed="false"><span><i aria-hidden="true"></i>Getting full</span><small>70% to below 90%</small></button>
+          <button class="state-preset high" type="button" data-context="93.1" data-state="high" aria-pressed="false"><span><i aria-hidden="true"></i>Near the limit</span><small>90% and above</small></button>
+        </div>
+        <div class="control-pair"><span class="control-label" id="meter-label">Meter</span><div class="inline-options" aria-labelledby="meter-label"><button type="button" data-meter="line" aria-pressed="false">Line</button><button type="button" data-meter="cells" aria-pressed="true">Cells</button></div></div>
+        <div class="control-pair"><label for="scenario">Scenario</label><select id="scenario"><option value="working">Work in progress</option><option value="done">Task completed</option><option value="clean">Clean & synced</option><option value="diverged">Ahead & behind</option><option value="context">Context near limit</option><option value="stale">Remote fetch failed</option><option value="conflict">Merge conflicts</option><option value="no-upstream">No upstream</option><option value="no-repo">Not a Git repo</option></select></div>
+      </div>
+      <div class="control-column">
+        <div class="control-heading"><h2><label for="columns">Terminal fit</label></h2><output id="requested-columns" class="width-readout" for="columns">120 columns</output></div>
+        <div class="slider-wrap width-control"><input id="columns" type="range" min="60" max="160" step="1" value="120"><div class="inline-options width-buttons" aria-label="Terminal width presets"><button type="button" data-columns="80" aria-pressed="false">80</button><button type="button" data-columns="100" aria-pressed="false">100</button><button type="button" data-columns="120" aria-pressed="true">120</button><button type="button" data-columns="160" aria-pressed="false">160</button></div></div>
+        <div class="control-pair"><span class="control-label" id="palette-label">Surface</span><div class="inline-options" aria-labelledby="palette-label"><button class="palette-button" type="button" data-theme="graphite" aria-pressed="true"><i style="--swatch: #1c1e22" aria-hidden="true"></i>Graphite</button><button class="palette-button" type="button" data-theme="slate" aria-pressed="false"><i style="--swatch: #26394c" aria-hidden="true"></i>Slate</button><button class="palette-button" type="button" data-theme="light" aria-pressed="false"><i style="--swatch: #f9fafb" aria-hidden="true"></i>Light</button></div></div>
+        <div class="control-pair"><label for="model">Model name</label><select id="model"><option value="short">gpt-5.4</option><option value="long">claude-opus-4-6</option></select></div>
+      </div>
+    </section>
+
+    <section class="design-notes" aria-label="Design notes">
+      <p id="context-explanation"><strong>Boundaries first, color second.</strong>Vertical rules separate groups; dots separate related metrics. Context is used/capacity plus a cell meter; no repeated label or percentage. Tokens are lavender, cache green, cost gold. Context turns amber at 70% and coral at 90%.</p>
+      <p><strong>Built for a terminal, not just a browser.</strong>Both meters use standard Unicode, not images or a custom icon font. Narrow widths drop secondary stats before context and Git warnings.</p>
+    </section>
+    <details class="comparison"><summary>Compare with the original footer</summary><pre class="original">D:\projects\pi-bar
+↑17k ↓1.2k R31k CH92.3% $0.050 (sub) 3.6%/500k (auto)</pre><p>Original content from your screenshot. In / out and cost are session totals; cache hit is from the latest request. The amount is an estimated usage cost, not necessarily your bill. All values on this page are simulated.</p></details>
+    <footer class="page-footnote"><span>Layout and state preview only. No API calls or Git commands.</span><span>Planned remote refresh: on startup, then every 3 minutes.</span></footer>
+    <span id="cell-measure" class="cell-measure" aria-hidden="true">0000000000</span>
+  </main>
+  <script>
+    "use strict";
+    const $ = (id) => document.getElementById(id);
+    const base = {
+      repo: "pi-bar", path: "D:\\projects\\pi-bar", branch: "main", git: true, upstream: "origin/main",
+      modified: 3, staged: 1, untracked: 2, dirtyFiles: 6, conflicts: 0, ahead: 2, behind: 0, stale: false,
+      context: 182000, capacity: 500000, input: 217000, output: 12000, cache: 92.3, cost: 0.050,
+      elapsed: 12, speed: 42, running: true,
+      status: "Generating a response…", reply: "I'll check the worktree and upstream before adjusting the layout."
+    };
+    const scenarios = {
+      working: {},
+      done: { elapsed: 48, speed: 56, output: 15200, cost: 0.058, running: false, status: "Completed. Last task metrics retained.", reply: "The two-row layout is ready to review. Your worktree was not changed." },
+      clean: { modified: 0, staged: 0, untracked: 0, dirtyFiles: 0, ahead: 0, behind: 0, elapsed: 78, speed: 48, running: false, status: "Completed. Worktree clean.", reply: "No uncommitted changes. The branch matches the last fetched upstream state." },
+      diverged: { ahead: 2, behind: 4, elapsed: 34, speed: 51, running: false, status: "Completed. Local and upstream histories have diverged.", reply: "There are 2 local-only commits and 4 upstream-only commits. Uncommitted files are counted separately." },
+      context: { context: 465500, input: 885000, output: 27500, cache: 71.6, cost: 0.243, elapsed: 69, speed: 38, status: "Generating a response…", reply: "Context is close to capacity. The meter makes that visible without adding a third row." },
+      stale: { stale: true, ahead: 2, behind: 1, elapsed: 41, speed: 52, running: false, status: "Fetch failed. Showing the last known remote state.", reply: "The remote comparison is out of date. Local file counts still reflect the worktree." },
+      conflict: { conflicts: 2, modified: 1, staged: 0, untracked: 0, dirtyFiles: 3, ahead: 2, behind: 4, elapsed: 26, speed: 45, running: false, status: "Completed. Two files need conflict resolution.", reply: "Conflicts take visual priority over normal modifications and remain visible at narrow widths." },
+      "no-upstream": { branch: "feature/footer", upstream: null, ahead: null, behind: null, modified: 2, staged: 0, untracked: 1, dirtyFiles: 3, elapsed: null, speed: null, cache: null, running: false, status: "Waiting for input.", reply: "No upstream is configured. Ahead/behind cannot be determined, so this branch is not marked as synced." },
+      "no-repo": { git: false, repo: "scratch", path: "D:\\projects\\scratch", branch: null, upstream: null, ahead: null, behind: null, modified: 0, staged: 0, untracked: 0, dirtyFiles: 0, elapsed: null, speed: null, cache: null, running: false, status: "Waiting for input.", reply: "This directory is not a Git repository. Only the directory and session information are shown." }
+    };
+    const models = {
+      short: { provider: "openai", name: "gpt-5.4", short: "gpt-5.4", thinking: "high" },
+      long: { provider: "anthropic", name: "claude-opus-4-6", short: "opus-4-6", thinking: "high" }
+    };
+    const taskStates = {
+      working: { icon: "●", label: "working", cls: "task-working", elapsed: 12, speed: 42, hint: "Working: only the marker animates. Timing and speed are sample values." },
+      done: { icon: "✓", label: "done", cls: "good", elapsed: 48, speed: 56, hint: "Done: a static checkmark, total task time and average generation speed." },
+      aborted: { icon: "■", label: "aborted", cls: "warning", elapsed: 18, speed: null, hint: "Aborted: stopped by the user, not a failure. Time is frozen; no completed-task speed is shown." },
+      error: { icon: "×", label: "error", cls: "error", elapsed: 9, speed: null, hint: "Error: the task failed. Time is frozen; details belong in the conversation, not in this footer." },
+      idle: { icon: "○", label: "idle", cls: "dim", elapsed: null, speed: null, hint: "Idle: no task has run yet, so there are no task metrics." }
+    };
+    let taskOverride = null;
+    let requestedColumns = 120;
+    let contextOverride = null;
+    let meterStyle = "cells";
+    let themeName = "graphite";
+    let scheduled = false;
+
+    // Terminal-cell sizing, rather than browser-only flexible gaps inside groups.
+    // CJK remains supported for future repo names; meter glyphs occupy one cell.
+    function cellWidth(text) {
+      let result = 0;
+      for (const char of text) {
+        const code = char.codePointAt(0);
+        if (/\p{Mark}/u.test(char) || code === 0x200d || code === 0xfe0f) continue;
+        const wide = code >= 0x1100 && (code <= 0x115f || code === 0x2329 || code === 0x232a ||
+          (code >= 0x2e80 && code <= 0xa4cf && code !== 0x303f) || (code >= 0xac00 && code <= 0xd7a3) ||
+          (code >= 0xf900 && code <= 0xfaff) || (code >= 0xfe10 && code <= 0xfe19) ||
+          (code >= 0xfe30 && code <= 0xfe6f) || (code >= 0xff00 && code <= 0xff60) ||
+          (code >= 0xffe0 && code <= 0xffe6) || (code >= 0x1f300 && code <= 0x1faff) || code >= 0x20000);
+        result += wide ? 2 : 1;
+      }
+      return result;
+    }
+    function truncate(text, limit) {
+      if (cellWidth(text) <= limit) return text;
+      if (limit <= 0) return "";
+      let result = "", cells = 0;
+      for (const char of text) { const width = cellWidth(char); if (cells + width > limit - 1) break; result += char; cells += width; }
+      return result + "…";
+    }
+    const segment = (text, cls = "", title = "") => ({ text, cls, title });
+    const plain = (parts) => parts.map((part) => part.text).join("");
+    const widthOf = (parts) => cellWidth(plain(parts));
+    const variant = (parts, omitted = [], emergencyOnly = false) => ({ parts, omitted, emergencyOnly });
+    const join = (groups, space = " │ ") => groups.filter((group) => group.length).flatMap((group, index) => index ? [segment(space, "separator"), ...group] : group);
+    const number = (value) => value < 1000 ? String(value) : `${Number((value / 1000).toFixed(1))}k`;
+    const contextState = (percent) => percent >= 90 ? "high" : percent >= 70 ? "warn" : "normal";
+    const severityClass = (percent) => percent >= 90 ? "error" : percent >= 70 ? "warning" : "";
+    const duration = (seconds) => seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m${seconds % 60 ? `${String(seconds % 60).padStart(2, "0")}s` : ""}`;
+    function truncateSegments(parts, limit) {
+      const result = []; let remaining = Math.max(0, limit - 1);
+      for (const part of parts) {
+        const cells = cellWidth(part.text);
+        if (cells <= remaining) { result.push(part); remaining -= cells; }
+        else { const text = truncate(part.text, remaining + 1).slice(0, -1); if (text) result.push({ ...part, text, bar: undefined }); break; }
+      }
+      if (limit > 0) result.push(segment("…", "dim"));
+      return result;
+    }
+    function contextBar(percent, cells) {
+      const filled = Math.round(Math.max(0, Math.min(100, percent)) * cells / 100);
+      // These are real, ordinary Unicode glyphs. No CSS width masking or SVG bar.
+      const glyph = meterStyle === "line" ? "━" : "▰";
+      return { ...segment(glyph.repeat(cells), "context-bar"), bar: { percent, cells, filled, glyph, severity: severityClass(percent) } };
+    }
+    const metric = (count, label, cls = "", title = "") => [segment(String(count), cls || "number", title), segment(` ${label}`, cls || "label", title)];
+    function gitVariants(data) {
+      const identity = (short = false) => join([
+        [segment(short ? truncate(data.repo, 9) : data.repo, "repo", data.path)],
+        ...(data.git ? [[segment(short ? truncate(data.branch, 14) : data.branch, "branch", `Current branch: ${data.branch}`)]] : [])
+      ], " / ");
+      if (!data.git) return [variant(join([identity(), [segment("not a Git repo", "dim")]]))];
+      const dirty = [];
+      if (data.conflicts) dirty.push(metric(data.conflicts, "conflicts", "error"));
+      if (data.modified) dirty.push(metric(data.modified, "modified", "git-modified"));
+      if (data.staged) dirty.push(metric(data.staged, "staged", "good"));
+      if (data.untracked) dirty.push(metric(data.untracked, "untracked", "git-untracked"));
+      if (!dirty.length) dirty.push([segment("clean", "good")]);
+      const difference = [];
+      if (!data.upstream) difference.push([segment("no upstream", "dim", "No upstream branch is configured; remote divergence is unknown")]);
+      else {
+        const title = `Compared with ${data.upstream}, as of the last successful fetch${data.stale ? " (out of date)" : ""}`;
+        if (data.ahead) difference.push(metric(data.ahead, "ahead", "good", title));
+        if (data.behind) difference.push(metric(data.behind, "behind", "warning", title));
+        if (!data.ahead && !data.behind) difference.push([segment("synced", "good", title)]);
+      }
+      const stale = data.stale ? [segment("remote stale", "warning", "Fetch failed; commit counts may be out of date")] : [];
+      const compactDirty = data.conflicts ? metric(data.conflicts, "conflicts", "error") : data.dirtyFiles ? metric(data.dirtyFiles, "dirty", "git-modified", "Unique changed files; demo counts, not a sum that double-counts staged and unstaged changes") : [segment("clean", "good")];
+      const priority = data.conflicts ? metric(data.conflicts, "conflicts", "error") : stale.length ? stale : compactDirty;
+      const secondary = data.conflicts && stale.length ? stale : [];
+      const shortened = cellWidth(data.repo) > 9 || cellWidth(data.branch) > 14 ? ["long names shortened"] : [];
+      return [
+        variant(join([identity(), join(dirty, " · "), join([stale, ...difference], " · ")])),
+        variant(join([identity(), compactDirty, join([stale, ...difference], " · ")]), ["Git file categories"]),
+        variant(join([identity(true), priority, secondary, join(difference, " · ")]), ["Git file categories", ...shortened]),
+        variant(join([identity(true), priority, secondary, ...(!data.upstream ? difference : [])]), ["Git file categories", ...shortened, ...(data.upstream ? ["commit counts"] : [])], true)
+      ];
+    }
+    function modelVariants(model) {
+      const title = `${model.provider}/${model.name}; thinking ${model.thinking}`;
+      const level = [segment(" · ", "separator"), segment(model.thinking, "dim", "Thinking level")];
+      return [
+        variant([segment(model.name, "model-name", title), ...level]),
+        variant([segment(model.short, "model-name", title), ...level], model.short !== model.name ? ["model name shortened"] : []),
+        variant([segment(model.short, "model-name", title)], ["thinking level"])
+      ];
+    }
+    function usageVariants(data) {
+      const percent = data.context / data.capacity * 100;
+      const title = `Context: ${percent.toFixed(1)}% used. Current occupancy, not cumulative input; compaction reduces it.`;
+      const context = (cells) => [
+        segment(`${number(data.context)}/${number(data.capacity)}`, `context-value ${severityClass(percent)}`, title),
+        segment(" "), contextBar(percent, cells)
+      ];
+      const io = join([
+        [segment("in ", "tokens", "Cumulative ordinary input tokens; excludes separately counted cache reads/writes"), segment(number(data.input), "tokens")],
+        [segment("out ", "tokens", "Cumulative output tokens; may include reasoning tokens"), segment(number(data.output), "tokens")]
+      ], " · ");
+      const cache = data.cache === null ? [] : [segment("cache ", "cache", "Cache hit rate for the latest model request, not a session average"), segment(`${Math.round(data.cache)}%`, "cache")];
+      const cacheOmitted = cache.length ? ["cache hit rate"] : [];
+      const cost = [segment(Number.isFinite(data.cost) ? `$${data.cost.toFixed(3)}` : "$—", "cost", "Estimated cumulative session cost in USD; demo data, not a bill")];
+      return [
+        variant(join([context(12), io, cache, cost])),
+        variant(join([context(8), io, cache, cost]), ["meter shortened"]),
+        variant(join([context(8), io, cost]), ["meter shortened", ...cacheOmitted]),
+        variant(join([context(8), cost]), ["meter shortened", "input/output", ...cacheOmitted]),
+        variant(join([context(4), cost]), ["meter shortened", "input/output", ...cacheOmitted]),
+        variant(context(4), ["meter shortened", "input/output", ...cacheOmitted, "session cost"])
+      ];
+    }
+    function getTask(data) {
+      const state = taskOverride ?? (data.running ? "working" : data.elapsed === null ? "idle" : "done");
+      const task = { state, ...taskStates[state] };
+      if (taskOverride === null) { task.elapsed = data.elapsed; task.speed = data.speed; }
+      return task;
+    }
+    function efficiencyVariants(task) {
+      // Keep only real separators; the whole group is right-aligned by layout.
+      // Padding individual fields creates gaps and reserves invisible "avg" space.
+      const status = [
+        segment(task.icon, `task-marker ${task.cls}${task.state === "working" ? " task-pulse" : ""}`, task.hint),
+        segment(` ${task.label}`, task.cls, task.hint)
+      ];
+      if (task.state === "idle") return [variant(status)];
+      const elapsedText = task.elapsed === null ? "—" : duration(task.elapsed);
+      const timeTitle = task.state === "working" ? "Elapsed task time including tool execution; simulated snapshot" : "Final task time including tool execution";
+      const elapsed = [segment(elapsedText, "eff-number", timeTitle)];
+      const hasSpeed = Number.isFinite(task.speed) && (task.state === "working" || task.state === "done");
+      const average = task.state === "done";
+      const speedText = hasSpeed ? `${task.speed} tok/s${average ? " avg" : ""}` : "—";
+      const speed = [segment(speedText, hasSpeed ? "eff-number" : "dim", hasSpeed ? `${average ? "Average" : "Current"} model generation speed, excluding tool execution; demo value` : "No completed-task generation speed available")];
+      return [
+        variant(join([status, join([elapsed, speed], " · ")])),
+        variant(join([status, elapsed]), ["generation speed"]),
+        variant(status, ["task timing", "generation speed"])
+      ];
+    }
+    function fitPair(leftOptions, rightOptions, columns) {
+      for (const left of leftOptions.filter((option) => !option.emergencyOnly)) for (const right of rightOptions) {
+        if (widthOf(left.parts) + widthOf(right.parts) + (right.parts.length ? 4 : 0) <= columns) return { left, right };
+      }
+      // When right-side information cannot fit, recover the richest left-only view.
+      for (const left of leftOptions) if (widthOf(left.parts) <= columns) return { left, right: variant([], ["right-side details"]) };
+      const left = leftOptions.at(-1);
+      return { left: variant(truncateSegments(left.parts, columns), [...left.omitted, "text clipped"]), right: variant([], ["right-side details"]) };
+    }
+    function renderSegments(element, parts) {
+      const fragment = document.createDocumentFragment();
+      for (const part of parts) {
+        const span = document.createElement("span");
+        span.className = part.cls;
+        if (part.cls.includes("task-marker")) span.setAttribute("aria-hidden", "true");
+        if (part.title) span.title = part.title;
+        if (part.bar) {
+          const { percent, cells, filled, glyph, severity } = part.bar;
+          span.setAttribute("role", "progressbar"); span.setAttribute("aria-label", "Context utilization");
+          span.setAttribute("aria-valuemin", "0"); span.setAttribute("aria-valuemax", "100");
+          span.setAttribute("aria-valuenow", percent.toFixed(1));
+          span.setAttribute("aria-valuetext", `${percent.toFixed(1)}%, ${contextState(percent)}`);
+          span.title = `${percent.toFixed(1)}% context occupancy; 70% warning, 90% high`;
+          for (const [text, cls] of [[glyph.repeat(filled), `bar-fill ${severity}`], [glyph.repeat(cells - filled), "bar-empty"]]) {
+            const child = document.createElement("span"); child.textContent = text; child.className = cls; span.append(child);
+          }
+        } else span.textContent = part.text;
+        fragment.append(span);
+      }
+      element.replaceChildren(fragment); element.hidden = !parts.length;
+    }
+    function gitOutput(data) {
+      if (!data.git) return "fatal: not a git repository";
+      const diff = [data.ahead ? `ahead ${data.ahead}` : "", data.behind ? `behind ${data.behind}` : ""].filter(Boolean).join(", ");
+      const lines = [`## ${data.branch}${data.upstream ? `...${data.upstream}${diff ? ` [${diff}]` : ""}` : ""}`];
+      if (data.conflicts) lines.push("UU src/footer.ts", "UU src/layout.ts");
+      else { if (data.modified) lines.push(" M src/footer.ts"); if (data.staged) lines.push("M  src/layout.ts"); if (data.untracked) lines.push("?? footer-prototype.html"); }
+      if (lines.length === 1) lines.push("(working tree clean)");
+      return lines.join("\n");
+    }
+    function render() {
+      const data = { ...base, ...scenarios[$("scenario").value] };
+      if (contextOverride !== null) data.context = Math.round(data.capacity * contextOverride / 100);
+      const percent = data.context / data.capacity * 100;
+      $("context-level").value = percent.toFixed(1); $("context-percentage").value = `${percent.toFixed(1)}%`;
+      $("reset-context").disabled = contextOverride === null;
+      $("terminal").dataset.theme = themeName;
+      const cell = $("cell-measure").getBoundingClientRect().width / 10;
+      const margin = parseFloat(getComputedStyle($("footer")).marginLeft) * 2;
+      $("terminal").style.setProperty("--terminal-width", `${requestedColumns * cell + margin + 2}px`);
+      const columns = Math.min(requestedColumns, Math.max(1, Math.floor(($("footer").getBoundingClientRect().width + .1) / cell)));
+      const top = fitPair(gitVariants(data), modelVariants(models[$("model").value]), columns);
+      const task = getTask(data);
+      const bottom = fitPair(usageVariants(data), efficiencyVariants(task), columns);
+      renderSegments($("repo-git"), top.left.parts); renderSegments($("model-info"), top.right.parts);
+      renderSegments($("usage-info"), bottom.left.parts); renderSegments($("efficiency-info"), bottom.right.parts);
+      $("actual-columns").textContent = `${columns} cols`; $("requested-columns").value = `${requestedColumns} columns`;
+      $("terminal-title").textContent = data.path; $("git-output").textContent = gitOutput(data);
+      $("assistant-text").textContent = data.reply; $("run-status-text").textContent = taskOverride === null ? data.status : task.hint;
+      $("efficiency-info").dataset.task = task.state;
+      $("task-hint").textContent = task.hint;
+      document.querySelectorAll("[data-task]").forEach((button) => {
+        if (button.tagName === "BUTTON") button.setAttribute("aria-pressed", String(button.dataset.task === task.state));
+      });
+      const omitted = [...new Set([...top.left.omitted, ...top.right.omitted, ...bottom.left.omitted, ...bottom.right.omitted])];
+      $("layout-note").textContent = `${columns} columns${columns < requestedColumns ? ` (viewport limited; ${requestedColumns} requested)` : ""}. ${omitted.length ? `Adapted: ${omitted.join(", ")}.` : "Full detail. No fields hidden."}`;
+      document.querySelectorAll("[data-columns]").forEach((button) => button.setAttribute("aria-pressed", String(Number(button.dataset.columns) === requestedColumns)));
+      document.querySelectorAll("[data-state]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.state === contextState(percent))));
+      document.querySelectorAll("[data-meter]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.meter === meterStyle)));
+      document.querySelectorAll("button[data-theme]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.theme === themeName)));
+      window.footerPreview = Object.freeze({
+        scenario: $("scenario").value, columns, requestedColumns, theme: themeName, meter: meterStyle, cost: data.cost,
+        context: Object.freeze({ percent, state: contextState(percent), overridden: contextOverride !== null }),
+        task: Object.freeze({ state: task.state, elapsed: task.elapsed, speed: task.speed, overridden: taskOverride !== null }),
+        top: Object.freeze({ left: plain(top.left.parts), right: plain(top.right.parts) }),
+        bottom: Object.freeze({ left: plain(bottom.left.parts), right: plain(bottom.right.parts) }), omitted: Object.freeze(omitted)
+      });
+    }
+    function scheduleRender() { if (scheduled) return; scheduled = true; requestAnimationFrame(() => { scheduled = false; render(); }); }
+    function setColumns(value) { requestedColumns = Math.min(160, Math.max(60, Number(value) || 120)); $("columns").value = requestedColumns; scheduleRender(); }
+    function setContext(value) { const parsed = Number(value); contextOverride = Number.isFinite(parsed) ? Math.max(0, Math.min(100, parsed)) : null; scheduleRender(); }
+    $("scenario").addEventListener("change", () => { contextOverride = null; taskOverride = null; scheduleRender(); });
+    document.querySelectorAll("button[data-task]").forEach((button) => button.addEventListener("click", () => { taskOverride = button.dataset.task; scheduleRender(); }));
+    $("model").addEventListener("change", scheduleRender);
+    $("context-level").addEventListener("input", (event) => setContext(event.target.value));
+    $("reset-context").addEventListener("click", () => { contextOverride = null; scheduleRender(); });
+    $("columns").addEventListener("input", (event) => setColumns(event.target.value));
+    document.querySelectorAll("[data-columns]").forEach((button) => button.addEventListener("click", () => setColumns(button.dataset.columns)));
+    document.querySelectorAll("[data-context]").forEach((button) => button.addEventListener("click", () => setContext(button.dataset.context)));
+    document.querySelectorAll("[data-meter]").forEach((button) => button.addEventListener("click", () => { meterStyle = button.dataset.meter; scheduleRender(); }));
+    document.querySelectorAll("button[data-theme]").forEach((button) => button.addEventListener("click", () => { themeName = button.dataset.theme; scheduleRender(); }));
+    for (const id of ["footer-only", "in-session"]) $(id).addEventListener("click", () => {
+      const focus = id === "footer-only";
+      $("terminal-stage").classList.toggle("focus-view", focus);
+      $("footer-only").setAttribute("aria-pressed", String(focus)); $("in-session").setAttribute("aria-pressed", String(!focus));
+      scheduleRender();
+    });
+    $("regions").addEventListener("click", () => {
+      const active = $("terminal-stage").classList.toggle("show-regions");
+      $("regions").setAttribute("aria-pressed", String(active)); $("regions").textContent = active ? "Hide regions" : "Show regions";
+    });
+    const params = new URLSearchParams(location.search);
+    if (Object.hasOwn(scenarios, params.get("scenario"))) $("scenario").value = params.get("scenario");
+    if (Object.hasOwn(models, params.get("model"))) $("model").value = params.get("model");
+    if (params.has("cols")) setColumns(params.get("cols"));
+    if (params.has("context")) setContext(params.get("context"));
+    if (["graphite", "slate", "light"].includes(params.get("theme"))) themeName = params.get("theme");
+    if (["line", "cells"].includes(params.get("meter"))) meterStyle = params.get("meter");
+    if (Object.hasOwn(taskStates, params.get("task"))) taskOverride = params.get("task");
+    if (params.get("view") === "session") $("in-session").click();
+    new ResizeObserver(scheduleRender).observe($("terminal-stage"));
+    document.fonts?.ready.then(scheduleRender);
+    scheduleRender();
+  </script>
+</body>
+</html>
