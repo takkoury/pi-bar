@@ -14,7 +14,9 @@
   },
   "files": [
     "src",
-    "README.md"
+    "assets",
+    "README.md",
+    "CONTRIBUTING.md"
   ],
   "engines": {
     "node": ">=22.18.0"

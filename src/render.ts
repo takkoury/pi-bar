@@ -4,7 +4,7 @@ import { parseColor, truncateToWidth, visibleWidth } from "@earendil-works/pi-tu
 import type { GitSnapshot } from "./git.ts";
 import type { TaskSnapshot, UsageTotals } from "./metrics.ts";
 
-export type Tone =
+type Tone =
   | "text"
   | "dim"
   | "separator"
@@ -15,13 +15,13 @@ export type Tone =
   | "red"
   | "track"
   | `thinking-${"minimal" | "low" | "medium" | "high" | "xhigh" | "max"}`;
-export interface Segment {
+interface Segment {
   text: string;
   tone: Tone;
   pulse?: boolean;
 }
-export type Parts = Segment[];
-export interface Pair {
+type Parts = Segment[];
+interface Pair {
   left: Parts;
   right: Parts;
 }
@@ -40,7 +40,6 @@ export interface FooterData {
   model: string;
   thinking: string;
   task: TaskSnapshot;
-  meter?: "cells" | "line";
 }
 
 const MIN_PAIR_GAP = 4;
@@ -141,7 +140,7 @@ export function formatDuration(ms: number, style: "clock" | "units" = "clock"): 
     .join(style === "units" ? "" : ":");
 }
 
-export const contextTone = (percent: number): Tone => (percent >= 90 ? "red" : percent >= 70 ? "amber" : "blue");
+const contextTone = (percent: number): Tone => (percent >= 90 ? "red" : percent >= 70 ? "amber" : "blue");
 
 function gitVariants(data: GitSnapshot): Variants {
   const repo = cleanText(data.repo);
@@ -220,11 +219,10 @@ function usageVariants(data: FooterData): Variants {
   const tone = known ? contextTone(percent) : "dim";
   const context = (cells: number): Parts => {
     const filled = known ? Math.round((Math.max(0, Math.min(100, percent)) * cells) / 100) : 0;
-    const glyph = data.meter === "line" ? "━" : "▰";
     return [
       segment(known ? formatNumber(tokens) : "?", tone),
-      segment(glyph.repeat(filled), tone),
-      segment(glyph.repeat(cells - filled), "track"),
+      segment("▰".repeat(filled), tone),
+      segment("▰".repeat(cells - filled), "track"),
       segment(` ${validCapacity ? formatNumber(capacity) : "?"}`, "dim"),
       segment(` ${known ? Math.round(percent) : "?"}%`, tone),
     ];
@@ -237,19 +235,17 @@ function usageVariants(data: FooterData): Variants {
   const cache =
     data.usage.cache === null ? [] : [segment("cache ", "dim"), segment(`${Math.round(data.usage.cache)}%`)];
   const cost = [segment(`$${data.usage.cost.toFixed(3)}`)];
-  const fullSize = data.meter === "line" ? 12 : 8;
-  const compactSize = data.meter === "line" ? 8 : 6;
   return [
-    variant(joinGroups([context(fullSize), io, cache, cost])),
-    variant(joinGroups([context(compactSize), io, cache, cost])),
-    variant(joinGroups([context(compactSize), io, cost])),
-    variant(joinGroups([context(compactSize), cost])),
+    variant(joinGroups([context(8), io, cache, cost])),
+    variant(joinGroups([context(6), io, cache, cost])),
+    variant(joinGroups([context(6), io, cost])),
+    variant(joinGroups([context(6), cost])),
     variant(joinGroups([context(4), cost])),
     variant(context(4)),
   ];
 }
 
-export function taskVariants(task: TaskSnapshot): Variants {
+function taskVariants(task: TaskSnapshot): Variants {
   const [icon, tone] = taskStyles[task.state];
   const status = [{ ...segment(icon, tone), pulse: task.state === "working" }, segment(` ${task.state}`, tone)];
   if (task.state === "idle") return [variant(status)];

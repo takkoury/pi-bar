@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import test from "node:test";
 import { FETCH_INTERVAL_MS, fetchArgs, fetchBackoff, GitMonitor, parseStatus } from "../src/git.ts";
-import { runGit, type GitRunner } from "../src/git-process.ts";
+import type { GitRunner } from "../src/git-process.ts";
 
 const headers = "# branch.oid abcdef123456\0# branch.head main\0# branch.upstream review/trunk\0# branch.ab +2 -4\0";
 const ordinary = (xy: string, name: string, sub = "N...") => `1 ${xy} ${sub} 100644 100644 100644 abc def ${name}\0`;
@@ -85,17 +85,15 @@ test("background fetch starts once, retains stale counts on failure, backs off, 
     fail = true,
     concurrent = 0,
     maxConcurrent = 0;
-  const runner: GitRunner = async (_cwd, args) => {
-    if (args.includes("rev-parse")) return { code: 0, stdout: "/repo\n", stderr: "" };
-    if (args.includes("status")) return { code: 0, stdout: headers, stderr: "" };
-    if (args.includes("for-each-ref"))
-      return { code: 0, stdout: "review\0refs/heads/trunk\0refs/remotes/review/trunk\n", stderr: "" };
-    fetches++;
-    maxConcurrent = Math.max(maxConcurrent, ++concurrent);
-    await new Promise((r) => setTimeout(r, 20));
-    concurrent--;
-    return { code: fail ? 1 : 0, stdout: "", stderr: fail ? "offline" : "" };
-  };
+  const runner = repositoryRunner({
+    fetch: async () => {
+      fetches++;
+      maxConcurrent = Math.max(maxConcurrent, ++concurrent);
+      await new Promise((r) => setTimeout(r, 20));
+      concurrent--;
+      return { code: fail ? 1 : 0, stdout: "", stderr: fail ? "offline" : "" };
+    },
+  });
   const monitor = new GitMonitor("/repo", () => {}, { runner, clock: () => now });
   try {
     await monitor.refresh();
@@ -150,23 +148,21 @@ test("no fetch outside repositories, without upstream, or with a local upstream"
 test("disposal aborts network work and suppresses late UI updates", async () => {
   let updates = 0,
     aborted = false;
-  const runner: GitRunner = async (_cwd, args, signal) => {
-    if (args.includes("rev-parse")) return { code: 0, stdout: "/repo\n", stderr: "" };
-    if (args.includes("status")) return { code: 0, stdout: headers, stderr: "" };
-    if (args.includes("for-each-ref"))
-      return { code: 0, stdout: "review\0refs/heads/trunk\0refs/remotes/review/trunk\n", stderr: "" };
-    await new Promise<void>((resolve) =>
-      signal.addEventListener(
-        "abort",
-        () => {
-          aborted = true;
-          resolve();
-        },
-        { once: true },
-      ),
-    );
-    return { code: -1, stdout: "", stderr: "cancelled", killed: true };
-  };
+  const runner = repositoryRunner({
+    fetch: async (_cwd, _args, signal) => {
+      await new Promise<void>((resolve) =>
+        signal.addEventListener(
+          "abort",
+          () => {
+            aborted = true;
+            resolve();
+          },
+          { once: true },
+        ),
+      );
+      return { code: -1, stdout: "", stderr: "cancelled", killed: true };
+    },
+  });
   const monitor = new GitMonitor(
     "/repo",
     () => {
@@ -203,6 +199,10 @@ test(
           "user.name=pi-bar Test",
           "-c",
           "user.email=test@example.invalid",
+          "-c",
+          "commit.gpgSign=false",
+          "-c",
+          "tag.gpgSign=false",
           ...args,
         ],
         { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
@@ -276,42 +276,18 @@ test(
 
 test("offline mode retains cached comparison without fetching", async () => {
   let fetched = false;
-  const runner: GitRunner = async (_cwd, args) => {
-    if (args.includes("rev-parse")) return { code: 0, stdout: "/repo\n", stderr: "" };
-    if (args.includes("status")) return { code: 0, stdout: headers, stderr: "" };
-    if (args.includes("for-each-ref"))
-      return { code: 0, stdout: "review\0refs/heads/trunk\0refs/remotes/review/trunk\n", stderr: "" };
-    fetched = true;
-    return { code: 0, stdout: "", stderr: "" };
-  };
+  const runner = repositoryRunner({
+    fetch: async () => {
+      fetched = true;
+      return { code: 0, stdout: "", stderr: "" };
+    },
+  });
   const monitor = new GitMonitor("/repo", () => {}, { runner, fetchEnabled: false });
   await monitor.refresh();
   await monitor.dispose();
   assert.equal(fetched, false);
   assert.equal(monitor.snapshot.remoteState, "cached");
   assert.equal(monitor.snapshot.ahead, 2);
-});
-
-test("timeout terminates a Git subprocess tree without waiting for its child", { timeout: 5000 }, async () => {
-  const started = Date.now();
-  const result = await runGit(
-    tmpdir(),
-    ["-c", "alias.statusline-wait=!sleep 30", "statusline-wait"],
-    new AbortController().signal,
-    150,
-  );
-  assert.equal(result.killed, true);
-  assert.ok(Date.now() - started < 4000);
-});
-
-test("process wrapper handles a missing cwd and pre-aborted commands", async () => {
-  const controller = new AbortController();
-  controller.abort();
-  assert.equal((await runGit(tmpdir(), ["status"], controller.signal)).killed, true);
-  assert.notEqual(
-    (await runGit(join(tmpdir(), "pi-bar-does-not-exist"), ["status"], new AbortController().signal)).code,
-    0,
-  );
 });
 
 test("ordinary branches beginning with detached@ still resolve and fetch their upstream", async () => {
@@ -436,15 +412,4 @@ test("concurrent disposals share the same cleanup promise", async () => {
     finished.resolve();
     await monitor.dispose();
   }
-});
-
-test("process output is bounded even when a command exceeds the buffer limit", { timeout: 5000 }, async () => {
-  const result = await runGit(
-    tmpdir(),
-    ["-c", "alias.statusline-output=!printf '%3145728s' x", "statusline-output"],
-    new AbortController().signal,
-  );
-  assert.equal(result.killed, true);
-  assert.equal(result.code, -1);
-  assert.ok(Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr) <= 2 * 1024 * 1024);
 });

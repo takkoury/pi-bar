@@ -5,15 +5,16 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { parseColor, styleText, visibleWidth } from "@earendil-works/pi-tui";
 import {
   cleanText,
-  contextTone,
   formatDuration,
   formatNumber,
   layoutFooter,
   plain,
   renderFooter,
-  taskVariants,
+  type FooterData,
 } from "../src/render.ts";
 import { example } from "./fixtures.ts";
+
+const taskText = (task: FooterData["task"]) => plain(layoutFooter({ ...example(), task }, 160)[1].right);
 
 const theme = (appearance: "dark" | "light") =>
   ({
@@ -74,7 +75,7 @@ test("wide layout uses consistent separators, provider prefix and compact metric
   assert.equal(plain(top.right), "[openai-codex] gpt-5.4 [high]");
   assert.equal(plain(bottom.left), "182k▰▰▰▰▰▰▰▰ 500k 36% │ ↑217k ↓12k │ cache 92% │ $0.050");
   assert.equal(plain(bottom.right), "● working │ 12 42tk/s");
-  assert.equal(plain(taskVariants({ state: "done", elapsedMs: 48000, speed: 56 })[0].parts), "✓ done │ 48s 56tk/s");
+  assert.equal(taskText({ state: "done", elapsedMs: 48000, speed: 56 }), "✓ done │ 48s 56tk/s");
 });
 
 test("context, model and token totals preserve literal brackets and single spaces", () => {
@@ -93,30 +94,28 @@ test("context, model and token totals preserve literal brackets and single space
   assert.ok(plain(layoutFooter(data, 160)[1].left).startsWith("54.4k▰▰▰▰▰▰▰▰ 272k 20% │ "));
 });
 
-test("all widths, states, palettes and meters render exactly two bounded rows", () => {
+test("all widths, states and palettes render exactly two bounded rows", () => {
   for (const state of ["working", "done", "aborted", "error", "idle"] as const)
-    for (const meter of ["cells", "line"] as const)
-      for (const appearance of ["dark", "light"] as const)
-        for (const columns of [0, 1, 2, 4, 8, 15, 20, 30, 40, 60, 80, 100, 120, 160, 240]) {
-          const data = example();
-          data.task.state = state;
-          data.task.elapsedMs = 5415000;
-          data.meter = meter;
-          data.git.repo = "仓库-🧪-e\u0301-with-a-long-name";
-          data.git.branch = "feature/very-long-branch-for-terminal-width-check";
-          data.model = "claude-opus-4-6-with-an-extra-long-model-name";
-          const rows = renderFooter(data, columns, theme(appearance), true);
-          assert.equal(rows.length, 2);
-          rows.forEach((line) => {
-            assert.ok(visibleWidth(line) <= columns);
-            assert.ok(!/[\r\n]/.test(line));
-          });
-          const layout = layoutFooter(data, columns);
-          for (let i = 0; i < 2; i++) {
-            assert.ok(!/ {2}/.test(plain(layout[i].right)));
-            if (layout[i].right.length) assert.equal(visibleWidth(rows[i]), columns);
-          }
+    for (const appearance of ["dark", "light"] as const)
+      for (const columns of [0, 1, 2, 4, 8, 15, 20, 30, 40, 60, 80, 100, 120, 160, 240]) {
+        const data = example();
+        data.task.state = state;
+        data.task.elapsedMs = 5415000;
+        data.git.repo = "仓库-🧪-e\u0301-with-a-long-name";
+        data.git.branch = "feature/very-long-branch-for-terminal-width-check";
+        data.model = "claude-opus-4-6-with-an-extra-long-model-name";
+        const rows = renderFooter(data, columns, theme(appearance), true);
+        assert.equal(rows.length, 2);
+        rows.forEach((line) => {
+          assert.ok(visibleWidth(line) <= columns);
+          assert.ok(!/[\r\n]/.test(line));
+        });
+        const layout = layoutFooter(data, columns);
+        for (let i = 0; i < 2; i++) {
+          assert.ok(!/ {2}/.test(plain(layout[i].right)));
+          if (layout[i].right.length) assert.equal(visibleWidth(rows[i]), columns);
         }
+      }
 });
 
 test("context thresholds, unknown context, and out-of-capacity values", () => {
@@ -128,7 +127,6 @@ test("context thresholds, unknown context, and out-of-capacity values", () => {
     [90, "red"],
     [110, "red"],
   ] as const) {
-    assert.equal(contextTone(percent), tone);
     const data = example();
     data.context.tokens = percent * 5000;
     const parts = layoutFooter(data, 160)[1].left;
@@ -189,26 +187,23 @@ test("compact model labels retain the provider prefix", () => {
   assert.equal(shortened, true);
 });
 
-test("Cells uses eight cells with proportional fill; Line keeps its existing length", () => {
-  for (const meter of ["cells", "line"] as const) {
-    const size = meter === "cells" ? 8 : 12;
-    const glyph = meter === "cells" ? "▰" : "━";
+test("Cells has proportional fill and shrinks through eight, six and four cells", () => {
+  const sizes = new Set<number>();
+  for (const columns of [20, 40, 60, 80, 120, 160]) {
     for (const tokens of [0, 250000, 500000, 600000, null]) {
       const data = example();
-      data.meter = meter;
       data.context.tokens = tokens;
-      const bar = layoutFooter(data, 160)[1].left.filter((part) => part.text.includes(glyph));
-      assert.equal(plain(bar).length, size);
+      const bar = layoutFooter(data, columns)[1].left.filter((part) => part.text.includes("▰"));
+      const size = plain(bar).length;
+      assert.ok([8, 6, 4].includes(size));
+      if (columns === 160) assert.equal(size, 8);
+      sizes.add(size);
       const filled = bar.filter((part) => part.tone !== "track");
       const expected = tokens === null ? 0 : Math.round(Math.min(tokens / 500000, 1) * size);
       assert.equal(plain(filled).length, expected);
     }
   }
-  // The default mode is Cells; narrow layouts may shorten it further, never lengthen it.
-  for (const columns of [40, 60, 80, 120, 160]) {
-    const text = plain(layoutFooter(example(), columns)[1].left);
-    assert.ok((text.match(/▰/g) ?? []).length <= 8);
-  }
+  assert.deepEqual([...sizes].sort(), [4, 6, 8]);
 });
 
 test("invalid terminal widths render empty rows rather than throwing", () => {
@@ -240,16 +235,13 @@ test("stopped task metrics use unit suffixes and one space before compact throug
     [324000, "05:24", "05m24s"],
     [5415000, "01:30:15", "01h30m15s"],
   ] as const) {
-    assert.equal(
-      plain(taskVariants({ state: "working", elapsedMs, speed: 70 })[0].parts),
-      `● working │ ${clock} 70tk/s`,
-    );
-    assert.equal(plain(taskVariants({ state: "done", elapsedMs, speed: 105 })[0].parts), `✓ done │ ${units} 105tk/s`);
-    assert.equal(plain(taskVariants({ state: "aborted", elapsedMs, speed: 105 })[0].parts), `■ aborted │ ${units} —`);
-    assert.equal(plain(taskVariants({ state: "error", elapsedMs, speed: 105 })[0].parts), `× error │ ${units} —`);
+    assert.equal(taskText({ state: "working", elapsedMs, speed: 70 }), `● working │ ${clock} 70tk/s`);
+    assert.equal(taskText({ state: "done", elapsedMs, speed: 105 }), `✓ done │ ${units} 105tk/s`);
+    assert.equal(taskText({ state: "aborted", elapsedMs, speed: 105 }), `■ aborted │ ${units} —`);
+    assert.equal(taskText({ state: "error", elapsedMs, speed: 105 }), `× error │ ${units} —`);
   }
-  assert.equal(plain(taskVariants({ state: "done", elapsedMs: null, speed: null })[0].parts), "✓ done │ — —");
-  assert.equal(plain(taskVariants({ state: "idle", elapsedMs: null, speed: null })[0].parts), "○ idle");
+  assert.equal(taskText({ state: "done", elapsedMs: null, speed: null }), "✓ done │ — —");
+  assert.equal(taskText({ state: "idle", elapsedMs: null, speed: null }), "○ idle");
 });
 
 test("task time and throughput have distinct colors in both themes; unavailable rates stay dim", () => {
@@ -335,29 +327,26 @@ test("capacity limits and ordinary metrics stay neutral while context usage foll
     for (const key of ["text", "dim", "blue", "lavender", "green", "amber", "red"] as const) {
       assert.ok(contrast(palette[key], palette.background) >= 4.5, `${appearance}: ${key}`);
     }
-    for (const meter of ["cells", "line"] as const) {
-      for (const percent of [0, 69.9, 70, 89.9, 90, 110, null]) {
-        const data = example();
-        data.meter = meter;
-        data.context.tokens = percent === null ? null : percent * 5000;
-        const tone = percent === null ? "dim" : percent >= 90 ? "red" : percent >= 70 ? "amber" : "blue";
-        const parts = layoutFooter(data, 160)[1].left;
-        assert.deepEqual(
-          parts.slice(0, 5).map((part) => part.tone),
-          [tone, tone, "track", "dim", tone],
-        );
-        const row = renderFooter(data, 160, theme(appearance))[1];
-        for (const part of parts.slice(0, 3)) {
-          if (part.text) expectColor(row, part.text, part.tone === "track" ? palette.track : palette[tone]);
-        }
-        expectColor(row, " 500k", palette.dim);
-        expectColor(row, ` ${percent === null ? "?" : Math.round(percent)}%`, palette[tone]);
-        expectColor(row, "↑217k", palette.lavender);
-        expectColor(row, "↓12k", palette.lavender);
-        expectColor(row, "cache ", palette.dim);
-        expectColor(row, "92%", palette.text);
-        expectColor(row, "$0.050", palette.text);
+    for (const percent of [0, 69.9, 70, 89.9, 90, 110, null]) {
+      const data = example();
+      data.context.tokens = percent === null ? null : percent * 5000;
+      const tone = percent === null ? "dim" : percent >= 90 ? "red" : percent >= 70 ? "amber" : "blue";
+      const parts = layoutFooter(data, 160)[1].left;
+      assert.deepEqual(
+        parts.slice(0, 5).map((part) => part.tone),
+        [tone, tone, "track", "dim", tone],
+      );
+      const row = renderFooter(data, 160, theme(appearance))[1];
+      for (const part of parts.slice(0, 3)) {
+        if (part.text) expectColor(row, part.text, part.tone === "track" ? palette.track : palette[tone]);
       }
+      expectColor(row, " 500k", palette.dim);
+      expectColor(row, ` ${percent === null ? "?" : Math.round(percent)}%`, palette[tone]);
+      expectColor(row, "↑217k", palette.lavender);
+      expectColor(row, "↓12k", palette.lavender);
+      expectColor(row, "cache ", palette.dim);
+      expectColor(row, "92%", palette.text);
+      expectColor(row, "$0.050", palette.text);
     }
   }
 });

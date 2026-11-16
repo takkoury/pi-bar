@@ -102,3 +102,7 @@ pi remove git:github.com/takkoury/pi-bar
 ```
 
 更新或卸载后，重启 pi，或在空闲时执行 `/reload` 即可生效。
+
+---
+
+想参与改进？请看[开发与维护说明](CONTRIBUTING.md)。
