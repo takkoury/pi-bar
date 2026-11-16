@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import statusline from "../src/index.ts";
+import bar from "../src/index.ts";
 import { assistant, entry } from "./fixtures.ts";
 
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
@@ -17,7 +17,7 @@ function harness(t: TestContext, mode: ExtensionContext["mode"] = "tui") {
   const handlers = new Map<string, Handler>();
   const notifications: string[] = [];
   const cwd = mkdtempSync(join(tmpdir(), "pi-bar-extension-"));
-  let command: Command | undefined;
+  const commands = new Map<string, Command>();
   let footer: ReturnType<FooterFactory> | undefined;
   let renders = 0;
   let subscriptions = 0;
@@ -29,8 +29,9 @@ function harness(t: TestContext, mode: ExtensionContext["mode"] = "tui") {
     on(name: string, handler: Handler) {
       handlers.set(name, handler);
     },
-    registerCommand(_name: string, options: { handler: Command }) {
-      command = options.handler;
+    registerCommand(name: string, options: { handler: Command }) {
+      assert.ok(!commands.has(name));
+      commands.set(name, options.handler);
     },
     getThinkingLevel: () => "high",
     appendEntry(customType: string, data: unknown) {
@@ -74,7 +75,7 @@ function harness(t: TestContext, mode: ExtensionContext["mode"] = "tui") {
           {
             getGitBranch: () => null,
             getAvailableProviderCount: () => 1,
-            getExtensionStatuses: () => new Map([["test", "external status"]]),
+            getExtensionStatuses: () => new Map(),
             onBranchChange: () => {
               subscriptions++;
               return () => {
@@ -93,14 +94,17 @@ function harness(t: TestContext, mode: ExtensionContext["mode"] = "tui") {
     await emit("session_shutdown");
     await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
-  statusline(pi);
+  bar(pi);
   return {
+    commands,
     ctx,
     entries,
     notifications,
     emit,
     run: async (args: string) => {
-      await command?.(args, ctx);
+      const command = commands.get("bar");
+      assert.ok(command, "/bar must be registered");
+      await command(args, ctx);
     },
     rows: () => footer?.render(160).map(stripVTControlCharacters),
     state: () => ({ renders, subscriptions, statsReads, footer }),
@@ -155,13 +159,27 @@ test("extension lifecycle: continuation, final result, abort/error, model/thinki
   await h.run("off");
   assert.equal(h.state().subscriptions, 0);
   await h.run("on");
-  await h.run("line");
   assert.equal(h.state().subscriptions, 1);
-  assert.match(h.rows()![1], /━/);
-  await h.run("statuses");
-  assert.deepEqual(h.notifications, ["test: external status"]);
+  assert.match(h.rows()![1], /20k▰{8} 500k 4%/);
+  assert.deepEqual(h.notifications, []);
   await h.emit("session_shutdown");
   assert.equal(h.state().subscriptions, 0);
+});
+
+test("only /bar is registered; removed and unknown subcommands do not change footer state", async (t) => {
+  const h = harness(t);
+  assert.deepEqual([...h.commands.keys()], ["bar"]);
+  await h.emit("session_start");
+  for (const enabled of [true, false]) {
+    if (!enabled) await h.run("off");
+    const original = h.state().footer;
+    for (const action of ["cells", "line", "refresh", "statuses", "unknown", "on off"]) {
+      await h.run(action);
+      assert.equal(h.notifications.pop(), "/bar [on|off]");
+      assert.equal(h.state().footer, original);
+      assert.equal(h.state().subscriptions, enabled ? 1 : 0);
+    }
+  }
 });
 
 test("print, JSON and RPC modes never install footer, poll Git or persist task state", async (t) => {
@@ -196,9 +214,12 @@ test("on is idempotent; old footer disposal cannot detach a new installation", a
   const h = harness(t);
   await h.emit("session_start");
   const original = h.state().footer!;
-  await h.run("on");
+  await h.run(" on ");
   assert.equal(h.state().footer, original);
+  await h.run(" off ");
   await h.run("off");
+  assert.equal(h.state().footer, undefined);
+  assert.equal(h.state().subscriptions, 0);
   await h.run("on");
   assert.notEqual(h.state().footer, original);
   original.dispose?.();
@@ -207,7 +228,7 @@ test("on is idempotent; old footer disposal cannot detach a new installation", a
   assert.match(h.rows()![1], /● working/);
   await h.run("");
   assert.equal(h.state().footer, undefined);
-  await h.run("");
+  await h.run("  ");
   assert.equal(h.state().subscriptions, 1);
 });
 

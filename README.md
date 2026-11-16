@@ -7,7 +7,7 @@ atlas │ main │ 3 modified · 1 staged · 2 untracked │ 2 ahead            
 182k▰▰▰▰▰▰▰▰ 500k 36% │ ↑217k ↓12k │ cache 92% │ $0.050                                      ● working │ 01:30:15 42tk/s
 ```
 
-实际使用语义颜色区分指标、已用和空闲 Cells；上面的纯文本仅展示结构。目录与分支统一用 `│` 分隔，模型显示为 `[provider] model_id [thinking level]`，方括号和各部分之间的单个空格均实际显示。Cells 默认 8 格，窄屏逐级缩短至 6 / 4 格；Line 保持 12 / 8 / 4 格。终端宽度不足时逐级缩短名称、缩短 meter、隐藏次要指标，不增加第三行或让两侧重叠。
+实际使用语义颜色区分指标、已用和空闲 Cells；上面的纯文本仅展示结构。目录与分支统一用 `│` 分隔，模型显示为 `[provider] model_id [thinking level]`，方括号和各部分之间的单个空格均实际显示。进度条固定使用 Cells，宽屏 8 格，窄屏逐级缩短至 6 / 4 格。终端宽度不足时逐级缩短名称、缩短 meter、隐藏次要指标，不增加第三行或让两侧重叠。
 
 ## 试用 / 安装
 
@@ -29,7 +29,7 @@ pi -e D:/projects/pi-bar
 pi install D:/projects/pi-bar
 ```
 
-配置写入 `~/.pi/agent/settings.json`。扩展默认开启，默认使用 Cells meter。然后重启 pi，或在空闲时执行 `/reload`。
+配置写入 `~/.pi/agent/settings.json`。扩展默认开启，使用 Cells meter。然后重启 pi，或在空闲时执行 `/reload`。
 
 本地安装引用原目录，不会复制文件，请保留 `D:/projects/pi-bar`。仅需项目级安装时，加上 `--local`；项目配置需获得信任。另一种方式是将整个包目录（不含 `node_modules`）复制到 `~/.pi/agent/extensions/pi-bar/`；不要只复制 `src/index.ts`。
 
@@ -41,15 +41,15 @@ pi remove D:/projects/pi-bar
 
 ## 命令
 
-| 命令                         | 行为                                      |
-| ---------------------------- | ----------------------------------------- |
-| `/statusline`                | 开关双行 footer                           |
-| `/statusline on` / `off`     | 启用 / 恢复 pi 默认 footer                |
-| `/statusline cells` / `line` | 切换 meter；默认 Cells                    |
-| `/statusline refresh`        | 立即刷新本地 Git；不绕过网络退避          |
-| `/statusline statuses`       | 查看其他扩展通过 `setStatus()` 提供的状态 |
+| 命令       | 行为                             |
+| ---------- | -------------------------------- |
+| `/bar`     | 切换双行 footer 开关             |
+| `/bar on`  | 开启 pi-bar                      |
+| `/bar off` | 关闭 pi-bar，恢复 pi 默认 footer |
 
-这些选择只保留到当前扩展运行时结束。`PI_STATUSLINE_NO_ANIMATION=1` 可关闭 Working 标记的轻微明暗变化；耗时仍每秒刷新。
+仅支持以上三个用法，不保留 `/statusline` 别名或其他子命令。Git 状态继续自动刷新。
+
+开关状态只保留到当前扩展运行时结束，重新加载后默认开启。`PI_STATUSLINE_NO_ANIMATION=1` 可关闭 Working 标记的轻微明暗变化；耗时仍每秒刷新。
 
 ## 指标口径
 
@@ -108,7 +108,7 @@ Thinking level 单独使用逐级增强的紫色阶梯，仅等级文字着色�
 
 ## 兼容性
 
-- 严格两行；不会追加 pi 默认的第三行 extension statuses，可用 `/statusline statuses` 查看。
+- 严格两行；不会追加 pi 默认的第三行 extension statuses。需要查看这些状态时，可用 `/bar off` 恢复 pi 默认 footer。
 - `setFooter()` 是替换式 API，多个 footer 扩展不能自动合并；最后设置者生效。`off` 恢复的是 pi 默认 footer，而不是其他扩展此前的 footer。
 - 颜色使用上面的深/浅两套语义 palette，随 pi 主题的 appearance 切换；不修改主题或终端背景。普通 Unicode 字符，使用 pi 的终端列宽工具处理 CJK、ANSI 和截断。
 - 不改变默认 working loader、编辑器、工具或模型请求。
@@ -127,10 +127,10 @@ npm run check
 
 已在 Windows / Node 24 / pi 1.5.2 验证：
 
-- TypeScript 严格类型检查；47 个自动测试，包含 300 组宽度/任务状态/主题/meter 布局组合。
+- TypeScript 严格类型检查；48 个自动测试，包含 300 组宽度/任务状态/主题/meter 布局组合。
 - 真实临时 Git 仓库：配置不同名 upstream、启动 fetch、ahead/behind、冲突、重命名、staged+unstaged、detached HEAD；fetch 前后工作区和索引一致。
 - 模拟失败退避、切换 upstream、取消、离线模式、延迟响应和并发清理；真实超时进程树终止、输出限额和 prune 配置隔离。
-- footer 重复开关、替换清理、缓存失效、损坏历史数据和非法宽度/用量的回归测试。
+- `/bar` 命令注册、重复开关、已删除子命令拒绝、替换清理、缓存失效、损坏历史数据和非法宽度/用量的回归测试。
 - 深浅主题的实际 ANSI 染色、Context 局部阈值色、Thinking 全等级与未知值回退、窄屏染色和参考背景对比度。
 - 初版已验证真实 pi ConPTY 终端：无本地 `node_modules` 时加载整个包、两行显示、Cells/Line、120↔60 列 resize、`/reload`、off/on、正常退出。
 

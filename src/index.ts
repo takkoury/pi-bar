@@ -1,13 +1,12 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { GitMonitor } from "./git.ts";
 import { sessionUsage, TASK_ENTRY, TaskTracker } from "./metrics.ts";
-import { cleanText, renderFooter, type FooterData } from "./render.ts";
+import { renderFooter, type FooterData } from "./render.ts";
 
 interface ActiveFooter {
   git: GitMonitor;
   requestRender(): void;
   syncClock(): void;
-  getStatuses(): ReadonlyMap<string, string>;
   dispose(): void;
 }
 
@@ -18,12 +17,11 @@ interface StatsCache {
   data: Pick<FooterData, "usage" | "context">;
 }
 
-export default function statusline(pi: ExtensionAPI): void {
+export default function bar(pi: ExtensionAPI): void {
   let ctx: ExtensionContext | undefined;
   let footer: ActiveFooter | undefined;
   let closing: Promise<void> = Promise.resolve();
   let enabled = true;
-  let meter: NonNullable<FooterData["meter"]> = "cells";
   let stats: StatsCache | undefined;
   const task = new TaskTracker();
 
@@ -75,7 +73,6 @@ export default function statusline(pi: ExtensionAPI): void {
       const instance: ActiveFooter = {
         git,
         requestRender,
-        getStatuses: () => footerData.getExtensionStatuses(),
         syncClock() {
           if (disposed || !task.isWorking) {
             stopClock();
@@ -117,7 +114,6 @@ export default function statusline(pi: ExtensionAPI): void {
               model: ctx.model?.id ?? "no model",
               thinking: ctx.thinkingLevel ?? pi.getThinkingLevel(),
               task: snapshot,
-              meter,
             },
             width,
             ctx.ui.theme,
@@ -209,11 +205,11 @@ export default function statusline(pi: ExtensionAPI): void {
     refreshStats(context);
   });
 
-  pi.registerCommand("statusline", {
-    description: "Two-row footer: on | off | refresh | cells | line | statuses",
+  pi.registerCommand("bar", {
+    description: "Toggle pi-bar, or explicitly turn it on | off",
     handler: async (args, context) => {
       if (context.mode !== "tui") {
-        if (context.hasUI) context.ui.notify("Statusline requires interactive terminal mode.", "info");
+        if (context.hasUI) context.ui.notify("pi-bar requires interactive terminal mode.", "info");
         return;
       }
       const action = args.trim() || (enabled ? "off" : "on");
@@ -224,21 +220,8 @@ export default function statusline(pi: ExtensionAPI): void {
       } else if (action === "on") {
         enabled = true;
         if (!footer) install(context);
-      } else if (action === "cells" || action === "line") {
-        meter = action;
-        changed();
-      } else if (action === "refresh") {
-        // Local refresh only; network retry backoff is intentionally not bypassed.
-        await footer?.git.refresh(true);
-      } else if (action === "statuses") {
-        const statuses = [...(footer?.getStatuses() ?? [])].sort(([a], [b]) => a.localeCompare(b));
-        context.ui.notify(
-          statuses.map(([key, value]) => `${cleanText(key)}: ${cleanText(value)}`).join("\n") ||
-            "No extension statuses.",
-          "info",
-        );
       } else {
-        context.ui.notify("/statusline [on|off|refresh|cells|line|statuses]", "info");
+        context.ui.notify("/bar [on|off]", "info");
       }
     },
   });
