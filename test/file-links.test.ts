@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { ExtensionAPI, ExtensionContext, MarkdownTransformer } from "@earendil-works/pi-coding-agent";
 import { Markdown, type MarkdownTheme, setCapabilityOverrides } from "@earendil-works/pi-tui";
 import register, { linkLocalFiles } from "../src/file-links.ts";
@@ -85,7 +86,17 @@ test("entry registers only an assistant display hook and falls back without hype
   assert.equal(apply(false), "README.md");
   setCapabilityOverrides({ hyperlinks: true });
   assert.equal(apply(true), "README.md");
-  assert.equal(apply(false), `[README.md](<${href("README.md")}>)`);
+  if (process.platform === "linux" && process.env.WSL_DISTRO_NAME && process.env.WT_SESSION) {
+    const uri = /^\[README\.md\]\(<(file:\/\/[^>]+)>\)$/.exec(apply(false))?.[1];
+    assert.ok(uri);
+    const windowsPath = fileURLToPath(uri, { windows: true });
+    assert.equal(
+      execFileSync("/usr/bin/wslpath", ["-u", windowsPath], { encoding: "utf8" }).trimEnd(),
+      join(cwd, "README.md"),
+    );
+  } else {
+    assert.equal(apply(false), `[README.md](<${href("README.md")}>)`);
+  }
   start({}, { mode: "rpc", cwd });
   assert.equal(apply(false), "README.md");
 });

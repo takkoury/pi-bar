@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
@@ -7,7 +8,23 @@ import { getCapabilities, Marked, type Token, type Tokens } from "@earendil-work
 
 const markdown = new Marked();
 
-function fileHref(candidate: string, cwd: string): string | undefined {
+type ToHref = (absolute: string) => string | undefined;
+const nativeHref: ToHref = (path) => pathToFileURL(path).href;
+
+// Windows Terminal opens the URL on Windows, not inside the distro. wslpath
+// knows the actual drive mounts as well as the distro's local UNC share.
+const wslHref: ToHref = (absolute) => {
+  if (absolute.includes("\\")) return; // A literal Linux backslash isn't a Windows separator.
+  const path = execFileSync("/usr/bin/wslpath", ["-w", absolute], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 500,
+  }).replace(/\r?\n$/, "");
+  if (!/^(?:[a-z]:\\|\\\\(?:wsl\.localhost|wsl\$)\\)/i.test(path)) return;
+  return pathToFileURL(path, { windows: true }).href;
+};
+
+function fileHref(candidate: string, cwd: string, toHref: ToHref): string | undefined {
   // Line/column annotations belong to the label, not the filename.
   const path = candidate.replace(/:\d+(?::\d+)?$/, "");
   const drivePath = /^[a-z]:[\\/]/i.test(path);
@@ -23,17 +40,20 @@ function fileHref(candidate: string, cwd: string): string | undefined {
   const absolute = /^~[\\/]/.test(path) ? resolve(homedir(), path.slice(2)) : resolve(cwd, path);
   if (/^[\\/]{2}/.test(absolute)) return;
   try {
-    if (statSync(absolute, { throwIfNoEntry: false })?.isFile()) return pathToFileURL(absolute).href;
+    if (statSync(absolute, { throwIfNoEntry: false })?.isFile()) return toHref(absolute);
   } catch {
     // An inaccessible or invalid path is still ordinary reply text.
   }
 }
 
-export function linkLocalFiles(source: string, cwd: string): string {
+export function linkLocalFiles(source: string, cwd: string, toHref: ToHref = nativeHref): string {
   const checked = new Map<string, string | undefined>();
+  function target(path: string) {
+    if (!checked.has(path)) checked.set(path, fileHref(path, cwd, toHref));
+    return checked.get(path);
+  }
   function link(label: string, path: string): string {
-    if (!checked.has(path)) checked.set(path, fileHref(path, cwd));
-    const href = checked.get(path);
+    const href = target(path);
     return href ? `[${label}](<${href}>)` : label;
   }
 
@@ -70,7 +90,7 @@ export function linkLocalFiles(source: string, cwd: string): string {
         // original label and optional title; replace just a simple local target.
         const inline = /^(\[[\s\S]*\]\(\s*)(<[^>\n]+>|[^()\s]+)([\s\S]*\))$/.exec(raw);
         if (!inline || (inline[2] !== token.href && inline[2] !== `<${token.href}>`)) return raw;
-        const href = fileHref(token.href, cwd);
+        const href = target(token.href);
         return href ? `${inline[1]}<${href}>${inline[3]}` : raw;
       }
       case "table": {
@@ -105,13 +125,15 @@ export function linkLocalFiles(source: string, cwd: string): string {
 }
 
 export default function fileLinks(pi: ExtensionAPI) {
+  const toHref =
+    process.platform === "linux" && process.env.WSL_DISTRO_NAME && process.env.WT_SESSION ? wslHref : nativeHref;
   let cwd: string | undefined;
   pi.on("session_start", (_event, ctx) => {
     cwd = ctx.mode === "tui" ? ctx.cwd : undefined;
   });
   pi.registerMarkdownTransformer(
     (source, { isStreaming }) =>
-      cwd && !isStreaming && getCapabilities().hyperlinks ? linkLocalFiles(source, cwd) : source,
+      cwd && !isStreaming && getCapabilities().hyperlinks ? linkLocalFiles(source, cwd, toHref) : source,
     { messageTypes: ["assistant"] },
   );
 }
