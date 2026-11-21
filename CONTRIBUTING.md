@@ -48,7 +48,7 @@ done
 pi -ne -e .
 ```
 
-用 `pi -ne -e ./src/footer.ts` 或 `pi -ne -e ./src/notify.ts` 可单独试用一个功能。也可以通过 `pi install <仓库绝对路径>` 安装本地版本，修改后在 pi 空闲时执行 `/reload`。本地路径安装引用原目录，不会复制代码。
+将 `-e .` 换为某个入口（例如 `-e ./src/file-links.ts`）可单独试用一个功能。也可以通过 `pi install <仓库绝对路径>` 安装本地版本，修改后在 pi 空闲时执行 `/reload`。本地路径安装引用原目录，不会复制代码。
 
 测试本地版本时，不要同时加载已安装的 GitHub 版本或其他替换状态栏的扩展，以免互相覆盖。没有编译步骤，也不需要生成 `dist/`。
 
@@ -60,6 +60,7 @@ pi -ne -e .
 | -------------------------- | ------------------------------------------------------------------- |
 | `src/footer.ts`            | 状态栏扩展入口；管理 `/footer`、用量缓存和状态栏资源                |
 | `src/notify.ts`            | 提醒扩展入口；管理 `/notify`、终端焦点和任务结束事件                |
+| `src/file-links.ts`        | 文件链接扩展入口；仅转换助手回复的 Markdown 显示，不替换工具渲染器  |
 | `src/git.ts`               | Git 状态解析、轮询、upstream 比较和后台 fetch 策略                  |
 | `src/git-process.ts`       | Git 进程执行、超时、取消和输出限额                                  |
 | `src/metrics.ts`           | 会话用量汇总、任务计时、吞吐速度和历史记录恢复                      |
@@ -69,6 +70,7 @@ pi -ne -e .
 | `test/git-process.test.ts` | 进程树终止、取消、无效目录和输出限额                                |
 | `test/metrics.test.ts`     | 用量计算、任务状态和恢复校验                                        |
 | `test/render.test.ts`      | 文本、宽度限制、颜色和参考背景对比度                                |
+| `test/file-links.test.ts`  | 文件解析、Markdown 保护和终端链接渲染                               |
 | `test/fixtures.ts`         | 测试用消息、会话记录和状态栏数据                                    |
 | `assets/`                  | README 使用的实际截图                                               |
 

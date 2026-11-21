@@ -3,14 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A two-row, Git-aware pi footer and background task reminders",
+  "description": "A Git-aware pi footer, background task reminders, and clickable local file paths",
   "keywords": [
     "pi-package"
   ],
   "pi": {
     "extensions": [
       "./src/footer.ts",
-      "./src/notify.ts"
+      "./src/notify.ts",
+      "./src/file-links.ts"
     ]
   },
   "files": [
