@@ -6,16 +6,31 @@ import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import bar from "../src/index.ts";
+import piBar from "../src/index.ts";
 import { assistant, entry } from "./fixtures.ts";
 
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
 type Command = Parameters<ExtensionAPI["registerCommand"]>[1]["handler"];
 type FooterFactory = NonNullable<Parameters<ExtensionContext["ui"]["setFooter"]>[0]>;
+type TerminalInputHandler = Parameters<ExtensionContext["ui"]["onTerminalInput"]>[0];
+
+const ENABLE_FOCUS = "\x1b[?1004h";
+const DISABLE_FOCUS = "\x1b[?1004l";
+const BELL = "\x07";
 
 function harness(t: TestContext, mode: ExtensionContext["mode"] = "tui") {
-  const handlers = new Map<string, Handler>();
+  const handlers = new Map<string, Handler[]>();
   const notifications: string[] = [];
+  const terminalWrites: string[] = [];
+  const write = process.stdout.write.bind(process.stdout);
+  t.mock.method(process.stdout, "write", (...args: Parameters<typeof write>) => {
+    if (args[0] === ENABLE_FOCUS || args[0] === DISABLE_FOCUS || args[0] === BELL) {
+      terminalWrites.push(args[0]);
+      return true;
+    }
+    return write(...args);
+  });
+  const terminalHandlers = new Set<TerminalInputHandler>();
   const cwd = mkdtempSync(join(tmpdir(), "pi-bar-extension-"));
   const commands = new Map<string, Command>();
   let footer: ReturnType<FooterFactory> | undefined;
@@ -27,7 +42,7 @@ function harness(t: TestContext, mode: ExtensionContext["mode"] = "tui") {
   let sessionId = "test";
   const pi = {
     on(name: string, handler: Handler) {
-      handlers.set(name, handler);
+      handlers.set(name, [...(handlers.get(name) ?? []), handler]);
     },
     registerCommand(name: string, options: { handler: Command }) {
       assert.ok(!commands.has(name));
@@ -63,6 +78,10 @@ function harness(t: TestContext, mode: ExtensionContext["mode"] = "tui") {
       notify(message: string) {
         notifications.push(message);
       },
+      onTerminalInput(handler: TerminalInputHandler) {
+        terminalHandlers.add(handler);
+        return () => terminalHandlers.delete(handler);
+      },
       setFooter(factory: FooterFactory | undefined) {
         footer?.dispose?.();
         footer = factory?.(
@@ -88,22 +107,25 @@ function harness(t: TestContext, mode: ExtensionContext["mode"] = "tui") {
     },
   } as unknown as ExtensionCommandContext;
   const emit = async (name: string, event = {}) => {
-    await handlers.get(name)?.(event, ctx);
+    for (const handler of handlers.get(name) ?? []) await handler(event, ctx);
   };
   t.after(async () => {
     await emit("session_shutdown");
     await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
-  bar(pi);
+  piBar(pi);
   return {
     commands,
     ctx,
     entries,
     notifications,
+    terminalWrites,
+    terminalHandlers,
+    bells: () => terminalWrites.filter((data) => data === BELL).length,
     emit,
-    run: async (args: string) => {
-      const command = commands.get("bar");
-      assert.ok(command, "/bar must be registered");
+    run: async (args: string, name = "footer") => {
+      const command = commands.get(name);
+      assert.ok(command, `/${name} must be registered`);
       await command(args, ctx);
     },
     rows: () => footer?.render(160).map(stripVTControlCharacters),
@@ -166,34 +188,145 @@ test("extension lifecycle: continuation, final result, abort/error, model/thinki
   assert.equal(h.state().subscriptions, 0);
 });
 
-test("only /bar is registered; removed and unknown subcommands do not change footer state", async (t) => {
+test("only /footer and /notify are registered; unknown footer arguments do not change its state", async (t) => {
   const h = harness(t);
-  assert.deepEqual([...h.commands.keys()], ["bar"]);
+  assert.deepEqual([...h.commands.keys()].sort(), ["footer", "notify"]);
   await h.emit("session_start");
   for (const enabled of [true, false]) {
     if (!enabled) await h.run("off");
     const original = h.state().footer;
     for (const action of ["cells", "line", "refresh", "statuses", "unknown", "on off"]) {
       await h.run(action);
-      assert.equal(h.notifications.pop(), "/bar [on|off]");
+      assert.equal(h.notifications.pop(), "/footer [on|off]");
       assert.equal(h.state().footer, original);
       assert.equal(h.state().subscriptions, enabled ? 1 : 0);
     }
   }
 });
 
-test("print, JSON and RPC modes never install footer, poll Git or persist task state", async (t) => {
+test("print, JSON and RPC modes never install footer, watch focus, poll Git or persist task state", async (t) => {
+  const stdinListeners = process.stdin.listenerCount("data");
   for (const mode of ["print", "json", "rpc"] as const) {
-    const h = harness(t, mode);
-    await h.emit("session_start");
-    await h.emit("before_agent_start");
-    await h.emit("turn_start");
-    await h.emit("message_end", { message: assistant() });
-    await h.emit("agent_settled", { aborted: false });
-    await h.run("on");
-    assert.equal(h.state().footer, undefined);
-    assert.equal(h.entries.length, 1);
+    await t.test(mode, async (subtest) => {
+      const h = harness(subtest, mode);
+      await h.emit("session_start");
+      await h.emit("before_agent_start");
+      await h.emit("agent_start");
+      await h.emit("turn_start");
+      await h.emit("message_end", { message: assistant() });
+      await h.emit("agent_settled", { aborted: false });
+      await h.run("on");
+      await h.run("on", "notify");
+      assert.equal(h.state().footer, undefined);
+      assert.equal(h.entries.length, 1);
+      assert.equal(h.terminalHandlers.size, 0);
+      assert.deepEqual(h.terminalWrites, []);
+      assert.equal(process.stdin.listenerCount("data"), stdinListeners);
+    });
   }
+});
+
+test("rings once for background task completion, only at final settlement", async (t) => {
+  const h = harness(t);
+  await h.emit("session_start");
+  await h.emit("agent_start");
+  // Pi's input pipeline may receive a split focus report, or swallow it in fullscreen.
+  process.stdin.emit("data", Buffer.from("\x1b["));
+  process.stdin.emit("data", Buffer.from("O"));
+  await h.emit("agent_end");
+  await h.emit("agent_start"); // Retry or queued continuation.
+  assert.equal(h.bells(), 0);
+  await h.emit("agent_settled", { aborted: false });
+  await h.emit("agent_settled", { aborted: false });
+  await h.emit("session_tree");
+  assert.equal(h.bells(), 1);
+
+  await h.emit("agent_start");
+  await h.emit("message_end", { message: assistant({ stopReason: "error" }) });
+  await h.emit("agent_settled", { aborted: false });
+  assert.equal(h.bells(), 2);
+
+  await h.emit("agent_start");
+  await h.emit("agent_settled", { aborted: true });
+  await h.emit("agent_start");
+  await h.emit("message_end", { message: assistant({ stopReason: "aborted" }) });
+  await h.emit("agent_settled", { aborted: false });
+  assert.equal(h.bells(), 2);
+});
+
+test("unknown or restored focus is silent, and bracketed paste does not change focus", async (t) => {
+  const h = harness(t);
+  await h.emit("session_start");
+  await h.emit("agent_start");
+  await h.emit("agent_settled", { aborted: false });
+  await h.emit("agent_start");
+  process.stdin.emit("data", "\x1b[O\x1b[I");
+  process.stdin.emit("data", "\x1b[200~\x1b[O\x1b[201~");
+  await h.emit("agent_settled", { aborted: false });
+  assert.equal(h.bells(), 0);
+});
+
+test("/notify toggles only reminders and ignores invalid arguments", async (t) => {
+  const h = harness(t);
+  await h.emit("session_start");
+  const footer = h.state().footer;
+  process.stdin.emit("data", "\x1b[O");
+
+  for (const [args, expected] of [
+    ["invalid", 1],
+    [" off ", 1],
+    ["off", 1],
+    ["invalid", 1],
+    ["", 2],
+    [" ", 2],
+    ["on", 3],
+    ["on", 4],
+  ] as const) {
+    await h.run(args, "notify");
+    if (args === "invalid") assert.equal(h.notifications.at(-1), "/notify [on|off]");
+    await h.emit("agent_start");
+    await h.emit("agent_settled", { aborted: false });
+    assert.equal(h.bells(), expected, `unexpected bell count for /notify ${args}`);
+    assert.equal(h.state().footer, footer);
+    assert.equal(h.state().subscriptions, 1);
+  }
+});
+
+test("notify stays active with the footer disabled or replaced, and cleans up at shutdown", async (t) => {
+  const h = harness(t);
+  const stdinListeners = process.stdin.listenerCount("data");
+  await h.emit("session_start");
+  assert.deepEqual(h.terminalWrites, [ENABLE_FOCUS]);
+  assert.equal(process.stdin.listenerCount("data"), stdinListeners + 1);
+  const [handle] = h.terminalHandlers;
+  assert.equal(handle("a"), undefined);
+  assert.deepEqual(handle("\x1b[O"), { consume: true });
+
+  process.stdin.emit("data", "\x1b[O");
+  await h.run("off");
+  assert.equal(h.state().footer, undefined);
+  await h.emit("agent_start");
+  await h.emit("agent_settled", { aborted: false });
+  assert.equal(h.bells(), 1);
+
+  await h.run("on");
+  h.state().footer?.dispose?.(); // Another extension replaces the footer.
+  await h.emit("agent_start");
+  await h.emit("agent_settled", { aborted: false });
+  assert.equal(h.bells(), 2);
+  assert.equal(h.terminalHandlers.size, 1);
+  assert.equal(process.stdin.listenerCount("data"), stdinListeners + 1);
+
+  await h.emit("session_shutdown");
+  await h.emit("session_shutdown");
+  assert.deepEqual(h.terminalWrites, [ENABLE_FOCUS, ENABLE_FOCUS, BELL, ENABLE_FOCUS, BELL, DISABLE_FOCUS]);
+  assert.equal(h.terminalHandlers.size, 0);
+  assert.equal(process.stdin.listenerCount("data"), stdinListeners);
+
+  await h.emit("session_start");
+  await h.emit("agent_start");
+  await h.emit("agent_settled", { aborted: false });
+  assert.equal(h.bells(), 2); // A new session has not received a focus report yet.
 });
 
 test("replacement footer disposal is idempotent and shutdown does not restore over its replacement", async (t) => {
