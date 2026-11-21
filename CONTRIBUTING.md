@@ -61,6 +61,7 @@ pi -ne -e .
 | `src/footer.ts`            | 状态栏扩展入口；管理 `/footer`、用量缓存和状态栏资源                |
 | `src/notify.ts`            | 提醒扩展入口；管理 `/notify`、终端焦点和任务结束事件                |
 | `src/file-links.ts`        | 文件链接扩展入口；仅转换助手回复的 Markdown 显示，不替换工具渲染器  |
+| `src/edit-last.ts`         | `F2` 取回当前分支上一条提问；通过 Pi 命令上下文导航并回填编辑器     |
 | `src/git.ts`               | Git 状态解析、轮询、upstream 比较和后台 fetch 策略                  |
 | `src/git-process.ts`       | Git 进程执行、超时、取消和输出限额                                  |
 | `src/metrics.ts`           | 会话用量汇总、任务计时、吞吐速度和历史记录恢复                      |
@@ -71,6 +72,7 @@ pi -ne -e .
 | `test/metrics.test.ts`     | 用量计算、任务状态和恢复校验                                        |
 | `test/render.test.ts`      | 文本、宽度限制、颜色和参考背景对比度                                |
 | `test/file-links.test.ts`  | 文件解析、Markdown 保护和终端链接渲染                               |
+| `test/edit-last.test.ts`   | 快捷键分派、分支选择及草稿保护                                      |
 | `test/fixtures.ts`         | 测试用消息、会话记录和状态栏数据                                    |
 | `assets/`                  | README 使用的实际截图                                               |
 

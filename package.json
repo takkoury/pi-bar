@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A Git-aware pi footer, background task reminders, and clickable local file paths",
+  "description": "A Git-aware pi footer, background task reminders, clickable local file paths, and a shortcut to edit the last prompt",
   "keywords": [
     "pi-package"
   ],
@@ -11,7 +11,8 @@
     "extensions": [
       "./src/footer.ts",
       "./src/notify.ts",
-      "./src/file-links.ts"
+      "./src/file-links.ts",
+      "./src/edit-last.ts"
     ]
   },
   "files": [
