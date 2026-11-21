@@ -9,7 +9,8 @@
   ],
   "pi": {
     "extensions": [
-      "./src/index.ts"
+      "./src/footer.ts",
+      "./src/notify.ts"
     ]
   },
   "files": [

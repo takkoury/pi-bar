@@ -18,7 +18,7 @@ interface StatsCache {
   data: Pick<FooterData, "usage" | "context">;
 }
 
-export function registerFooter(pi: ExtensionAPI): void {
+export default function registerFooter(pi: ExtensionAPI): void {
   let ctx: ExtensionContext | undefined;
   let footer: ActiveFooter | undefined;
   let closing: Promise<void> = Promise.resolve();

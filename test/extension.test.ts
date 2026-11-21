@@ -6,7 +6,8 @@ import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import piBar from "../src/index.ts";
+import registerFooter from "../src/footer.ts";
+import registerNotify from "../src/notify.ts";
 import { assistant, entry } from "./fixtures.ts";
 
 type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
@@ -18,7 +19,11 @@ const ENABLE_FOCUS = "\x1b[?1004h";
 const DISABLE_FOCUS = "\x1b[?1004l";
 const BELL = "\x07";
 
-function harness(t: TestContext, mode: ExtensionContext["mode"] = "tui") {
+function harness(
+  t: TestContext,
+  mode: ExtensionContext["mode"] = "tui",
+  extensions = [registerFooter, registerNotify],
+) {
   const handlers = new Map<string, Handler[]>();
   const notifications: string[] = [];
   const terminalWrites: string[] = [];
@@ -113,7 +118,7 @@ function harness(t: TestContext, mode: ExtensionContext["mode"] = "tui") {
     await emit("session_shutdown");
     await rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
-  piBar(pi);
+  for (const register of extensions) register(pi);
   return {
     commands,
     ctx,
@@ -186,6 +191,29 @@ test("extension lifecycle: continuation, final result, abort/error, model/thinki
   assert.deepEqual(h.notifications, []);
   await h.emit("session_shutdown");
   assert.equal(h.state().subscriptions, 0);
+});
+
+test("footer and notify can each be loaded on their own", async (t) => {
+  await t.test("footer only", async (subtest) => {
+    const h = harness(subtest, "tui", [registerFooter]);
+    await h.emit("session_start");
+    assert.deepEqual([...h.commands.keys()], ["footer"]);
+    assert.equal(h.rows()?.length, 2);
+    assert.equal(h.terminalHandlers.size, 0);
+    assert.deepEqual(h.terminalWrites, []);
+  });
+
+  await t.test("notify only", async (subtest) => {
+    const h = harness(subtest, "tui", [registerNotify]);
+    await h.emit("session_start");
+    assert.deepEqual([...h.commands.keys()], ["notify"]);
+    assert.equal(h.state().footer, undefined);
+    await h.emit("agent_start");
+    process.stdin.emit("data", "\x1b[O");
+    await h.emit("agent_settled", { aborted: false });
+    assert.equal(h.bells(), 1);
+    assert.equal(h.entries.length, 1);
+  });
 });
 
 test("only /footer and /notify are registered; unknown footer arguments do not change its state", async (t) => {

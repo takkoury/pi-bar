@@ -7,7 +7,7 @@ const FOCUS_IN = "\x1b[I";
 const FOCUS_OUT = "\x1b[O";
 const BELL = "\x07";
 
-export function registerNotify(pi: ExtensionAPI): void {
+export default function registerNotify(pi: ExtensionAPI): void {
   let enabled = true;
   let dispose: (() => void) | undefined;
   let unfocused = false;
