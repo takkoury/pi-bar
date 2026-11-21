@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A two-row, Git-aware pi footer with context and task metrics",
+  "description": "A two-row, Git-aware pi footer and background task reminders",
   "keywords": [
     "pi-package"
   ],

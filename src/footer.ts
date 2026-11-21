@@ -1,10 +1,11 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { Component } from "@earendil-works/pi-tui";
 import { GitMonitor } from "./git.ts";
 import { sessionUsage, TASK_ENTRY, TaskTracker } from "./metrics.ts";
 import { renderFooter, type FooterData } from "./render.ts";
 
-interface ActiveFooter {
-  git: GitMonitor;
+interface ActiveFooter extends Pick<Component, "invalidate" | "render"> {
+  refreshGit(force?: boolean): void;
   requestRender(): void;
   syncClock(): void;
   dispose(): void;
@@ -50,9 +51,7 @@ export function registerFooter(pi: ExtensionAPI): void {
   };
 
   const install = (context: ExtensionContext) => {
-    if (context.mode !== "tui") return;
     ctx = context;
-    footer?.dispose();
     context.ui.setFooter((tui, _theme, footerData) => {
       let disposed = false;
       let timer: ReturnType<typeof setInterval> | undefined;
@@ -71,7 +70,9 @@ export function registerFooter(pi: ExtensionAPI): void {
       };
       // Each installed footer owns its subscriptions, timer and Git process lifetime.
       const instance: ActiveFooter = {
-        git,
+        refreshGit(force) {
+          void git.refresh(force);
+        },
         requestRender,
         syncClock() {
           if (disposed || !task.isWorking) {
@@ -90,14 +91,8 @@ export function registerFooter(pi: ExtensionAPI): void {
           if (footer === instance) footer = undefined;
           closing = Promise.allSettled([closing, git.dispose()]).then(() => {});
         },
-      };
-      footer = instance;
-      git.start();
-      instance.syncClock();
-      return {
-        dispose: instance.dispose,
         invalidate() {
-          stats = undefined;
+          if (!disposed) stats = undefined;
         },
         render(width: number): string[] {
           if (disposed || !ctx) return ["", ""];
@@ -121,6 +116,10 @@ export function registerFooter(pi: ExtensionAPI): void {
           );
         },
       };
+      footer = instance;
+      git.start();
+      instance.syncClock();
+      return instance;
     });
   };
 
@@ -135,24 +134,17 @@ export function registerFooter(pi: ExtensionAPI): void {
     await closing;
     ctx = undefined;
   });
-  const start = (context: ExtensionContext) => {
+  const startTask = (context: ExtensionContext, modelRequest = false) => {
     if (context.mode !== "tui") return;
     ctx = context;
-    task.start();
+    if (modelRequest) task.requestStart();
+    else task.start();
     footer?.syncClock();
     changed();
   };
-  pi.on("before_agent_start", (_event, context) => {
-    start(context);
-  });
-  pi.on("agent_start", (_event, context) => {
-    start(context);
-  });
-  pi.on("turn_start", (_event, context) => {
-    if (context.mode !== "tui") return;
-    start(context);
-    task.requestStart();
-  });
+  pi.on("before_agent_start", (_event, context) => startTask(context));
+  pi.on("agent_start", (_event, context) => startTask(context));
+  pi.on("turn_start", (_event, context) => startTask(context, true));
   pi.on("message_end", (event, context) => {
     if (context.mode !== "tui") return;
     ctx = context;
@@ -163,18 +155,16 @@ export function registerFooter(pi: ExtensionAPI): void {
   });
   pi.on("tool_execution_end", (_event, context) => {
     if (context.mode !== "tui") return;
-    ctx = context;
-    void footer?.git.refresh();
+    footer?.refreshGit();
   });
   pi.on("agent_settled", (event, context) => {
     if (context.mode !== "tui") return;
     ctx = context;
-    const wasWorking = task.isWorking;
     const result = task.settle(event.aborted);
     footer?.syncClock();
-    if (wasWorking) pi.appendEntry(TASK_ENTRY, result);
+    if (result) pi.appendEntry(TASK_ENTRY, result);
     stats = undefined;
-    void footer?.git.refresh(true);
+    footer?.refreshGit(true);
     changed();
   });
   // agent_end is deliberately NOT used: recovery and queued continuations may still follow it.
@@ -186,24 +176,16 @@ export function registerFooter(pi: ExtensionAPI): void {
     stats = undefined;
     changed();
   });
-  const refreshStats = (context: ExtensionContext) => {
+  const refreshStats = (_event: unknown, context: ExtensionContext) => {
     if (context.mode !== "tui") return;
     ctx = context;
     stats = undefined;
     changed();
   };
-  pi.on("session_compact", (_event, context) => {
-    refreshStats(context);
-  });
-  pi.on("session_compact_failed", (_event, context) => {
-    refreshStats(context);
-  });
-  pi.on("model_select", (_event, context) => {
-    refreshStats(context);
-  });
-  pi.on("thinking_level_select", (_event, context) => {
-    refreshStats(context);
-  });
+  pi.on("session_compact", refreshStats);
+  pi.on("session_compact_failed", refreshStats);
+  pi.on("model_select", refreshStats);
+  pi.on("thinking_level_select", refreshStats);
 
   pi.registerCommand("footer", {
     description: "Toggle the pi-bar footer, or explicitly turn it on | off",
@@ -215,8 +197,9 @@ export function registerFooter(pi: ExtensionAPI): void {
       const action = args.trim() || (enabled ? "off" : "on");
       if (action === "off") {
         enabled = false;
-        footer?.dispose();
-        context.ui.setFooter(undefined);
+        // Pi disposes the old footer when replacing it. If another extension has
+        // already replaced ours, leave theirs installed.
+        if (footer) context.ui.setFooter(undefined);
       } else if (action === "on") {
         enabled = true;
         if (!footer) install(context);

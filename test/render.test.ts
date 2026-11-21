@@ -3,18 +3,8 @@ import test from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { parseColor, styleText, visibleWidth } from "@earendil-works/pi-tui";
-import {
-  cleanText,
-  formatDuration,
-  formatNumber,
-  layoutFooter,
-  plain,
-  renderFooter,
-  type FooterData,
-} from "../src/render.ts";
+import { formatDuration, formatNumber, renderFooter, type FooterData } from "../src/render.ts";
 import { example } from "./fixtures.ts";
-
-const taskText = (task: FooterData["task"]) => plain(layoutFooter({ ...example(), task }, 160)[1].right);
 
 const theme = (appearance: "dark" | "light") =>
   ({
@@ -22,6 +12,10 @@ const theme = (appearance: "dark" | "light") =>
     style: (text: string, options: Parameters<Theme["style"]>[1]) =>
       styleText(text, options as Parameters<typeof styleText>[1], "truecolor"),
   }) as Theme;
+
+const splitRow = (row: string) => stripVTControlCharacters(row).split(/ {4,}/);
+const textRows = (data: FooterData, columns = 160) => renderFooter(data, columns, theme("dark")).map(splitRow);
+const taskText = (task: FooterData["task"]) => textRows({ ...example(), task })[1][1];
 
 const palettes = {
   dark: {
@@ -70,11 +64,10 @@ const contrast = (foreground: string, background: string) => {
 
 test("wide layout uses consistent separators, provider prefix and compact metrics", () => {
   const data = example();
-  const [top, bottom] = layoutFooter(data, 160);
-  assert.equal(plain(top.left), "atlas │ main │ 3 modified · 1 staged · 2 untracked │ 2 ahead");
-  assert.equal(plain(top.right), "[openai-codex] gpt-5.4 [high]");
-  assert.equal(plain(bottom.left), "182k▰▰▰▰▰▰▰▰ 500k 36% │ ↑217k ↓12k │ cache 92% │ $0.050");
-  assert.equal(plain(bottom.right), "● working │ 12 42tk/s");
+  assert.deepEqual(textRows(data), [
+    ["atlas │ main │ 3 modified · 1 staged · 2 untracked │ 2 ahead", "[openai-codex] gpt-5.4 [high]"],
+    ["182k▰▰▰▰▰▰▰▰ 500k 36% │ ↑217k ↓12k │ cache 92% │ $0.050", "● working │ 12 42tk/s"],
+  ]);
   assert.equal(taskText({ state: "done", elapsedMs: 48000, speed: 56 }), "✓ done │ 48s 56tk/s");
 });
 
@@ -86,12 +79,12 @@ test("context, model and token totals preserve literal brackets and single space
   data.thinking = "low";
   data.usage.input = 129700;
   data.usage.output = 35500;
-  const [top, bottom] = layoutFooter(data, 160);
-  assert.equal(plain(top.right), "[openai] gpt-6-astra [low]");
+  const [top, bottom] = textRows(data);
+  assert.equal(top[1], "[openai] gpt-6-astra [low]");
   // Percentage is calculated from actual usage, not the rounded labels.
-  assert.equal(plain(bottom.left), "15k▰▰▰▰▰▰▰▰ 272k 6% │ ↑129.7k ↓35.5k │ cache 92% │ $0.050");
+  assert.equal(bottom[0], "15k▰▰▰▰▰▰▰▰ 272k 6% │ ↑129.7k ↓35.5k │ cache 92% │ $0.050");
   data.context.tokens = 54400;
-  assert.ok(plain(layoutFooter(data, 160)[1].left).startsWith("54.4k▰▰▰▰▰▰▰▰ 272k 20% │ "));
+  assert.match(textRows(data)[1][0], /^54\.4k▰{8} 272k 20% │ /);
 });
 
 test("all widths, states and palettes render exactly two bounded rows", () => {
@@ -106,61 +99,39 @@ test("all widths, states and palettes render exactly two bounded rows", () => {
         data.model = "claude-opus-4-6-with-an-extra-long-model-name";
         const rows = renderFooter(data, columns, theme(appearance), true);
         assert.equal(rows.length, 2);
-        rows.forEach((line) => {
-          assert.ok(visibleWidth(line) <= columns);
-          assert.ok(!/[\r\n]/.test(line));
-        });
-        const layout = layoutFooter(data, columns);
-        for (let i = 0; i < 2; i++) {
-          assert.ok(!/ {2}/.test(plain(layout[i].right)));
-          if (layout[i].right.length) assert.equal(visibleWidth(rows[i]), columns);
+        for (const row of rows) {
+          assert.ok(visibleWidth(row) <= columns);
+          assert.doesNotMatch(row, /[\r\n]/);
+          const parts = splitRow(row);
+          assert.ok(parts.length <= 2);
+          for (const part of parts) assert.doesNotMatch(part, / {2}/);
+          if (parts.length === 2) assert.equal(visibleWidth(row), columns);
         }
       }
-});
-
-test("context thresholds, unknown context, and out-of-capacity values", () => {
-  for (const [percent, tone] of [
-    [0, "blue"],
-    [69.9, "blue"],
-    [70, "amber"],
-    [89.9, "amber"],
-    [90, "red"],
-    [110, "red"],
-  ] as const) {
-    const data = example();
-    data.context.tokens = percent * 5000;
-    const parts = layoutFooter(data, 160)[1].left;
-    assert.equal(parts[0].tone, tone);
-    assert.ok(plain(parts).startsWith(`${formatNumber(percent * 5000)}▰▰▰▰▰▰▰▰ 500k ${Math.round(percent)}% │ `));
-  }
-  const data = example();
-  data.context.tokens = null;
-  assert.ok(plain(layoutFooter(data, 160)[1].left).startsWith("?▰▰▰▰▰▰▰▰ 500k ?% │ "));
-  assert.equal(layoutFooter(data, 160)[1].left[0].tone, "dim");
 });
 
 test("Git warnings and unique dirty count are protected as space shrinks", () => {
   const data = example();
   data.git.conflicts = 2;
   data.git.remoteState = "stale";
-  assert.match(plain(layoutFooter(data, 80)[0].left), /2 conflicts/);
-  assert.match(plain(layoutFooter(data, 80)[0].left), /remote stale/);
-  assert.match(plain(layoutFooter(data, 30)[0].left), /2 conflicts/);
+  assert.match(textRows(data, 80)[0][0], /2 conflicts/);
+  assert.match(textRows(data, 80)[0][0], /remote stale/);
+  assert.match(textRows(data, 30)[0][0], /2 conflicts/);
   data.git.conflicts = 0;
   data.git.remoteState = "fresh";
-  assert.match(plain(layoutFooter(data, 50)[0].left), /5 dirty/);
+  assert.match(textRows(data, 50)[0][0], /5 dirty/);
   data.git.upstream = null;
   data.git.ahead = data.git.behind = null;
-  const noUpstream = plain(layoutFooter(data, 120)[0].left);
+  const noUpstream = textRows(data, 120)[0][0];
   assert.match(noUpstream, /no upstream/);
   assert.doesNotMatch(noUpstream, /synced/);
   data.git.upstream = "origin/missing";
-  assert.match(plain(layoutFooter(data, 120)[0].left), /upstream unknown/);
+  assert.match(textRows(data, 120)[0][0], /upstream unknown/);
 });
 
 test("no terminal control injection through repo/provider/model/thinking labels", () => {
   const data = example();
-  data.git.repo = "evil\x1b[2J\nrepo";
+  data.git.repo = "evil\x1b[2J\u202e\r\nrepo";
   data.provider = "\x1b[31mprovider\x1b[0m\nname";
   data.model = "\x1b]0;evil title\x07model\tname";
   data.thinking = "\x1b[31mhigh\x1b[0m\n";
@@ -169,7 +140,7 @@ test("no terminal control injection through repo/provider/model/thinking labels"
   assert.ok(lines[0].includes("[provider name] "));
   assert.ok(lines[0].includes("model name [high]"));
   assert.ok(!lines.some((line) => /[\n\t\x1b]/.test(line)));
-  assert.equal(cleanText("a\u202eb\r\nc"), "a b c");
+  assert.ok(!lines.some((line) => line.includes("\u202e")));
 });
 
 test("compact model labels retain the provider prefix", () => {
@@ -178,7 +149,7 @@ test("compact model labels retain the provider prefix", () => {
   data.model = "claude-opus-4-6-with-an-extra-long-model-name";
   let shortened = false;
   for (const columns of [60, 80, 100, 120, 160, 240]) {
-    const label = plain(layoutFooter(data, columns)[0].right);
+    const label = textRows(data, columns)[0][1];
     if (!label) continue;
     assert.ok(label.startsWith("[anthropic] "), label);
     assert.ok(label.endsWith(" [high]"), label);
@@ -193,14 +164,16 @@ test("Cells has proportional fill and shrinks through eight, six and four cells"
     for (const tokens of [0, 250000, 500000, 600000, null]) {
       const data = example();
       data.context.tokens = tokens;
-      const bar = layoutFooter(data, columns)[1].left.filter((part) => part.text.includes("▰"));
-      const size = plain(bar).length;
+      const row = renderFooter(data, columns, theme("dark"))[1];
+      const size = stripVTControlCharacters(row).match(/▰+/)?.[0].length ?? 0;
       assert.ok([8, 6, 4].includes(size));
       if (columns === 160) assert.equal(size, 8);
       sizes.add(size);
-      const filled = bar.filter((part) => part.tone !== "track");
-      const expected = tokens === null ? 0 : Math.round(Math.min(tokens / 500000, 1) * size);
-      assert.equal(plain(filled).length, expected);
+      const filled = tokens === null ? 0 : Math.round(Math.min(tokens / 500000, 1) * size);
+      if (tokens !== null && filled) {
+        expectColor(row, "▰".repeat(filled), tokens >= 450000 ? palettes.dark.red : palettes.dark.blue);
+      }
+      if (filled < size) expectColor(row, "▰".repeat(size - filled), palettes.dark.track);
     }
   }
   assert.deepEqual([...sizes].sort(), [4, 6, 8]);
@@ -218,12 +191,12 @@ test("invalid context values are displayed as unknown", () => {
   for (const tokens of [NaN, Infinity, -1]) {
     const data = example();
     data.context.tokens = tokens;
-    assert.ok(plain(layoutFooter(data, 160)[1].left).startsWith("?▰▰▰▰▰▰▰▰ 500k ?% │ "));
+    assert.match(textRows(data)[1][0], /^\?▰{8} 500k \?% │ /);
   }
   for (const capacity of [NaN, Infinity, -1, 0]) {
     const data = example();
     data.context.capacity = capacity;
-    assert.ok(plain(layoutFooter(data, 160)[1].left).startsWith("?▰▰▰▰▰▰▰▰ ? ?% │ "));
+    assert.match(textRows(data)[1][0], /^\?▰{8} \? \?% │ /);
   }
 });
 
@@ -292,11 +265,15 @@ test("Git identities stay neutral while actionable states retain semantic colors
     expectColor(row, "status stale", palette.amber);
     expectColor(row, "remote stale", palette.amber);
     for (const columns of [30, 60, 80, 160]) {
-      const parts = layoutFooter(data, columns)[0].left;
-      for (const part of parts) {
-        if (part.text === "main") assert.equal(part.tone, "text");
-        if (part.text === "2 conflicts") assert.equal(part.tone, "red");
-        if (part.text.endsWith("stale")) assert.equal(part.tone, "amber");
+      const row = renderFooter(data, columns, theme(appearance))[0];
+      const [left] = splitRow(row);
+      for (const [label, tone] of [
+        ["main", "text"],
+        ["2 conflicts", "red"],
+        ["status stale", "amber"],
+        ["remote stale", "amber"],
+      ] as const) {
+        if (left.includes(label)) expectColor(row, label, palette[tone]);
       }
     }
 
@@ -331,17 +308,13 @@ test("capacity limits and ordinary metrics stay neutral while context usage foll
       const data = example();
       data.context.tokens = percent === null ? null : percent * 5000;
       const tone = percent === null ? "dim" : percent >= 90 ? "red" : percent >= 70 ? "amber" : "blue";
-      const parts = layoutFooter(data, 160)[1].left;
-      assert.deepEqual(
-        parts.slice(0, 5).map((part) => part.tone),
-        [tone, tone, "track", "dim", tone],
-      );
       const row = renderFooter(data, 160, theme(appearance))[1];
-      for (const part of parts.slice(0, 3)) {
-        if (part.text) expectColor(row, part.text, part.tone === "track" ? palette.track : palette[tone]);
-      }
+      const tokens = percent === null ? "?" : formatNumber(percent * 5000);
+      const usage = percent === null ? "?" : Math.round(percent);
+      assert.ok(splitRow(row)[0].startsWith(`${tokens}▰▰▰▰▰▰▰▰ 500k ${usage}% │ `));
+      expectColor(row, tokens, palette[tone]);
       expectColor(row, " 500k", palette.dim);
-      expectColor(row, ` ${percent === null ? "?" : Math.round(percent)}%`, palette[tone]);
+      expectColor(row, ` ${usage}%`, palette[tone]);
       expectColor(row, "↑217k", palette.lavender);
       expectColor(row, "↓12k", palette.lavender);
       expectColor(row, "cache ", palette.dim);
@@ -374,16 +347,17 @@ test("thinking levels use the approved progressive purple ramp with neutral brac
       previousContrast = ratio;
       data.thinking = level;
       for (const columns of [80, 100, 160, 240]) {
-        const parts = layoutFooter(data, columns)[0].right;
-        assert.ok(parts.length > 0);
         const row = renderFooter(data, columns, theme(appearance))[0];
+        const label = splitRow(row)[1];
+        const model = label?.match(/^\[anthropic\] (.+) \[/)?.[1];
+        assert.ok(model);
         expectColor(row, "[anthropic] ", palette.dim);
-        expectColor(row, parts[1].text, palette.text);
+        expectColor(row, model, palette.text);
         expectColor(row, " [", palette.dim);
         expectColor(row, level, hex);
         expectColor(row, "]", palette.dim);
         assert.equal(row, renderFooter(data, columns, theme(appearance), true)[0]);
-        assert.ok(plain(parts).endsWith(` [${level}]`));
+        assert.ok(label.endsWith(` [${level}]`));
         assert.ok(visibleWidth(row) <= columns);
       }
     }

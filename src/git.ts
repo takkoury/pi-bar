@@ -1,7 +1,7 @@
 import { basename } from "node:path";
 import { runGit, type GitRunner } from "./git-process.ts";
 
-export interface GitStatus {
+interface GitStatus {
   branch: string;
   oid: string;
   upstream: string | null;
@@ -59,7 +59,7 @@ export function parseStatus(output: string): GitStatus {
   return status;
 }
 
-export type RemoteState = "cached" | "fetching" | "fresh" | "stale";
+type RemoteState = "cached" | "fetching" | "fresh" | "stale";
 export interface GitSnapshot extends GitStatus {
   kind: "loading" | "repo" | "not-repo" | "error";
   repo: string;
@@ -83,16 +83,16 @@ interface Upstream {
   destination: string;
   root: string;
 }
-export const FETCH_INTERVAL_MS = 180_000;
+const FETCH_INTERVAL_MS = 180_000;
 const MAX_FETCH_BACKOFF_MS = 1_800_000;
 const FETCH_TIMEOUT_MS = 15_000;
 const POLL_INTERVAL_MS = 5_000;
 const REFRESH_THROTTLE_MS = 300;
 
-export const fetchBackoff = (failures: number): number =>
+const fetchBackoff = (failures: number): number =>
   Math.min(FETCH_INTERVAL_MS * 2 ** Math.max(0, failures - 1), MAX_FETCH_BACKOFF_MS);
 
-export function fetchArgs(upstream: Pick<Upstream, "remote" | "source" | "destination">): string[] {
+function fetchArgs({ remote, source, destination }: Upstream): string[] {
   return [
     "-c",
     "credential.interactive=false",
@@ -106,8 +106,8 @@ export function fetchArgs(upstream: Pick<Upstream, "remote" | "source" | "destin
     "--no-auto-maintenance",
     "--refmap=",
     "--",
-    upstream.remote,
-    `+${upstream.source}:${upstream.destination}`,
+    remote,
+    `+${source}:${destination}`,
   ];
 }
 
@@ -177,10 +177,13 @@ export class GitMonitor {
     const signal = this.controller.signal;
     const rootResult = await this.runner(this.cwd, ["rev-parse", "--show-toplevel"], signal);
     if (this.stopped) return;
-    if (rootResult.code !== 0) {
+    if (rootResult.killed || rootResult.code !== 0) {
+      // Only a definitive result should discard the last known repository and upstream.
+      if (rootResult.killed || !/not a git repository|must be run in a work tree/i.test(rootResult.stderr)) {
+        throw new Error("Git work tree unavailable");
+      }
       this.setTarget(null);
-      const notRepo = /not a git repository|must be run in a work tree/i.test(rootResult.stderr);
-      this.snapshot = { ...emptyGit(this.cwd), kind: notRepo ? "not-repo" : "error" };
+      this.snapshot = { ...emptyGit(this.cwd), kind: "not-repo" };
       this.changed();
       return;
     }
@@ -207,7 +210,7 @@ export class GitMonitor {
       );
       if (this.stopped) return;
       const [remote, source, destination] = ref.stdout.trimEnd().split("\0");
-      if (ref.code === 0 && remote && source?.startsWith("refs/") && destination?.startsWith("refs/")) {
+      if (ref.code === 0 && !ref.killed && remote && source?.startsWith("refs/") && destination?.startsWith("refs/")) {
         target = {
           key: JSON.stringify([root, status.branch, remote, source, destination]),
           root,

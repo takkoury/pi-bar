@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { FETCH_INTERVAL_MS, fetchArgs, fetchBackoff, GitMonitor, parseStatus } from "../src/git.ts";
+import { GitMonitor, parseStatus } from "../src/git.ts";
 import type { GitRunner } from "../src/git-process.ts";
 
 const headers = "# branch.oid abcdef123456\0# branch.head main\0# branch.upstream review/trunk\0# branch.ab +2 -4\0";
@@ -65,21 +65,35 @@ test("porcelain parser: unique files, staged+unstaged, conflicts, rename source 
   assert.equal(parseStatus("# branch.oid (initial)\0# branch.head main\0").upstream, null);
 });
 
-test("scoped fetch uses configured upstream only and never pulls/prunes/tags/submodules", () => {
-  const args = fetchArgs({ remote: "review", source: "refs/heads/trunk", destination: "refs/remotes/review/trunk" });
+test("scoped fetch uses only the configured upstream and disables side effects", async (t) => {
+  const calls: string[][] = [];
+  const monitor = new GitMonitor("/repo", () => {}, {
+    runner: repositoryRunner({
+      fetch: async (_cwd, args) => {
+        calls.push(args);
+        return { code: 0, stdout: "", stderr: "" };
+      },
+    }),
+  });
+  t.after(() => monitor.dispose());
+  await monitor.refresh();
+  assert.equal(calls.length, 1);
+  const [args] = calls;
   assert.deepEqual(args.slice(-3), ["--", "review", "+refs/heads/trunk:refs/remotes/review/trunk"]);
-  assert.ok(args.includes("--no-recurse-submodules"));
-  assert.ok(args.includes("--no-tags"));
-  assert.ok(args.includes("--no-write-fetch-head"));
-  assert.ok(args.includes("--refmap="));
-  assert.ok(args.includes("--no-prune"));
-  assert.ok(args.includes("--no-prune-tags"));
-  assert.equal(fetchBackoff(1), 180000);
-  assert.equal(fetchBackoff(2), 360000);
-  assert.equal(fetchBackoff(99), 1800000);
+  for (const flag of [
+    "--no-recurse-submodules",
+    "--no-tags",
+    "--no-write-fetch-head",
+    "--refmap=",
+    "--no-prune",
+    "--no-prune-tags",
+  ]) {
+    assert.ok(args.includes(flag), `Missing ${flag}`);
+  }
 });
 
 test("background fetch starts once, retains stale counts on failure, backs off, then recovers", async () => {
+  const interval = 180_000;
   let now = 0,
     fetches = 0,
     fail = true,
@@ -103,16 +117,16 @@ test("background fetch starts once, retains stale counts on failure, backs off, 
     await waitFor(() => monitor.snapshot.remoteState === "stale");
     assert.equal(monitor.snapshot.ahead, 2);
     assert.equal(monitor.snapshot.behind, 4);
-    now = FETCH_INTERVAL_MS - 1;
+    now = interval - 1;
     await monitor.refresh(true);
     assert.equal(fetches, 1);
     now++;
     await monitor.refresh(true);
     await waitFor(() => fetches === 2 && concurrent === 0);
-    now += FETCH_INTERVAL_MS;
+    now += interval;
     await monitor.refresh(true);
     assert.equal(fetches, 2);
-    now += FETCH_INTERVAL_MS;
+    now += interval;
     fail = false;
     await monitor.refresh(true);
     await waitFor(() => monitor.snapshot.remoteState === "fresh");
@@ -143,6 +157,34 @@ test("no fetch outside repositories, without upstream, or with a local upstream"
     if (kind === "outside") assert.equal(monitor.snapshot.kind, "not-repo");
     if (kind === "local") assert.equal(monitor.snapshot.remoteState, "fresh");
   }
+});
+
+test("temporary work-tree lookup failure preserves the last status; leaving a repo clears it", async (t) => {
+  const repo = repositoryRunner();
+  let rootError: string | undefined;
+  const monitor = new GitMonitor("/repo", () => {}, {
+    fetchEnabled: false,
+    runner: (cwd, args, signal) =>
+      rootError && args.includes("rev-parse")
+        ? Promise.resolve({ code: 128, stdout: "", stderr: rootError })
+        : repo(cwd, args, signal),
+  });
+  t.after(() => monitor.dispose());
+  await monitor.refresh();
+  const original = monitor.snapshot;
+  assert.equal(original.kind, "repo");
+
+  rootError = "permission denied";
+  await monitor.refresh(true);
+  assert.deepEqual(monitor.snapshot, { ...original, localStale: true });
+  rootError = undefined;
+  await monitor.refresh(true);
+  assert.deepEqual(monitor.snapshot, original);
+
+  rootError = "fatal: not a git repository";
+  await monitor.refresh(true);
+  assert.equal(monitor.snapshot.kind, "not-repo");
+  assert.equal(monitor.snapshot.root, null);
 });
 
 test("disposal aborts network work and suppresses late UI updates", async () => {

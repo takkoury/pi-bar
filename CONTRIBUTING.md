@@ -96,7 +96,7 @@ git diff --check
 
 `check` 依次运行 Prettier、TypeScript 和测试。测试不调用收费模型接口；真实 Git 测试使用临时目录和本地远端，不推送到 GitHub。进程测试使用 Git shell alias，在 Windows 上需要 Git for Windows 提供的 shell。
 
-修改某个模块时，优先在对应测试文件中补充回归用例。显示测试通过布局和最终 ANSI 输出验证行为，不依赖内部候选布局的生成方式。
+修改某个模块时，优先在对应测试文件中补充回归用例。显示测试通过 `renderFooter` 的最终文本和 ANSI 输出验证行为，不依赖内部的布局候选或颜色片段。
 
 修改显示效果后，还需要在真实 pi 中检查深浅主题、窄屏、工作中与结束后的显示，以及 `/footer` 开关和 `/reload`。有明显变化时更新 `assets/pi-bar-preview.png`，截图只保留输入框和状态栏，避免带入私人对话。
 

@@ -329,16 +329,18 @@ test("notify stays active with the footer disabled or replaced, and cleans up at
   assert.equal(h.bells(), 2); // A new session has not received a focus report yet.
 });
 
-test("replacement footer disposal is idempotent and shutdown does not restore over its replacement", async (t) => {
+test("disposal, /footer off, and shutdown leave another extension's replacement footer intact", async (t) => {
   const h = harness(t);
   await h.emit("session_start");
   const component = h.state().footer!;
-  component.dispose?.();
+  h.ctx.ui.setFooter(() => ({ render: () => ["replacement"], invalidate() {} }));
   component.dispose?.();
   assert.equal(h.state().subscriptions, 0);
   const before = h.state().renders;
+  await h.run("off");
   await h.emit("agent_start");
   await h.emit("session_shutdown");
+  assert.deepEqual(h.rows(), ["replacement"]);
   assert.equal(h.state().renders, before);
   assert.deepEqual(component.render(160), ["", ""]);
 });

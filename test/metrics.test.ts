@@ -54,9 +54,11 @@ test("task time includes tools; weighted request throughput excludes tools and i
   tracker.response(assistant({ durationMs: 4000, usage: usage({ output: 400 }) }));
   assert.equal(tracker.snapshot().speed, 100);
   const final = tracker.settle(false);
+  assert.ok(final);
   assert.equal(final.elapsedMs, 16000);
   assert.ok(Math.abs(final.speed! - 500 / 6) < 1e-12);
   now = 999999;
+  assert.equal(tracker.settle(false), undefined);
   assert.deepEqual(tracker.snapshot(), final);
   tracker.start();
   assert.equal(tracker.snapshot().speed, null);
@@ -74,7 +76,7 @@ test("error recovery, abort, and unreported timings remain honest", () => {
   tracker.requestStart();
   now = 3000;
   tracker.response(assistant({ stopReason: "stop" })); // Fallback to monotonic request clock.
-  assert.equal(tracker.settle(false).state, "done");
+  assert.equal(tracker.settle(false)?.state, "done");
   tracker.start();
   now = 4000;
   tracker.response(assistant({ stopReason: "error" }));
@@ -84,7 +86,7 @@ test("error recovery, abort, and unreported timings remain honest", () => {
   assert.deepEqual(tracker.settle(true), { state: "aborted", elapsedMs: 2000, speed: null });
   tracker.start();
   tracker.response(assistant()); // No request start/timing: no invented throughput.
-  assert.equal(tracker.settle(false).speed, null);
+  assert.equal(tracker.settle(false)?.speed, null);
 });
 
 test("final task metrics restore on the active branch only and reject corrupt state", () => {
@@ -148,10 +150,10 @@ test("deferred responses and invalid timings do not invent throughput", () => {
     tracker.requestStart();
     tracker.response(assistant({ durationMs }));
     assert.equal(tracker.snapshot().speed, null);
-    assert.equal(tracker.settle(false).speed, null);
+    assert.equal(tracker.settle(false)?.speed, null);
   }
   const tracker = new TaskTracker(() => 0);
   tracker.requestStart();
   tracker.response(assistant({ durationMs: 1000, stopReason: "deferred" }));
-  assert.equal(tracker.settle(false).speed, null);
+  assert.equal(tracker.settle(false)?.speed, null);
 });

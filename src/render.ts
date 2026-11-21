@@ -106,13 +106,16 @@ const colors = Object.fromEntries(
 ) as Record<"dark" | "light", Record<Tone, ReturnType<typeof parseColor>>>;
 
 /** Untrusted repo/model/status names must not inject terminal escapes or extra rows. */
-export const cleanText = (text: string): string =>
+const cleanText = (text: string): string =>
   stripVTControlCharacters(text)
     .replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-export const plain = (parts: Parts): string => parts.map((part) => part.text).join("");
-const widthOf = (parts: Parts): number => visibleWidth(plain(parts));
+// pi-tui may insert ANSI resets around the ellipsis. Label segments must stay plain
+// until paint(), otherwise those resets override our colors.
+const clipText = (text: string, columns: number, ellipsis = "…"): string =>
+  stripVTControlCharacters(truncateToWidth(text, columns, ellipsis));
+const widthOf = (parts: Parts): number => visibleWidth(parts.map((part) => part.text).join(""));
 const normalizeColumns = (columns: number): number => (Number.isFinite(columns) ? Math.max(0, Math.floor(columns)) : 0);
 const segment = (text: string, tone: Tone = "text"): Segment => ({ text, tone });
 const variant = (parts: Parts, emergency = false): Variant => ({ parts, width: widthOf(parts), emergency });
@@ -147,8 +150,8 @@ function gitVariants(data: GitSnapshot): Variants {
   const branch = cleanText(data.branch);
   const identity = (short = false): Parts =>
     joinGroups([
-      [segment(short ? truncateToWidth(repo, 9, "…") : repo)],
-      ...(data.kind === "repo" ? [[segment(short ? truncateToWidth(branch, 14, "…") : branch)]] : []),
+      [segment(short ? clipText(repo, 9) : repo)],
+      ...(data.kind === "repo" ? [[segment(short ? clipText(branch, 14) : branch)]] : []),
     ]);
   if (data.kind !== "repo") {
     const label =
@@ -194,7 +197,7 @@ function gitVariants(data: GitSnapshot): Variants {
     variant(joinGroups([shortIdentity, local, compactDirty, comparison])),
     variant(joinGroups([shortIdentity, priority, ...noUpstream]), true),
     // At tiny widths, preserve warnings before spending columns on a long repository name.
-    variant(joinGroups([priority, ...noUpstream, [segment(truncateToWidth(branch, 10, "…"))]]), true),
+    variant(joinGroups([priority, ...noUpstream, [segment(clipText(branch, 10))]]), true),
     variant(priority, true),
   ];
 }
@@ -208,7 +211,7 @@ function modelVariants(data: FooterData): Variants {
   const level = [segment(" [", "dim"), segment(thinking, thinkingTones.get(thinking) ?? "dim"), segment("]", "dim")];
   const label = (name: string): Variant =>
     variant([segment(prefix, "dim"), segment(name, model === "no model" ? "dim" : "text"), ...level]);
-  return [label(model), label(short), label(truncateToWidth(short, 22, "…"))];
+  return [label(model), label(short), label(clipText(short, 22))];
 }
 
 function usageVariants(data: FooterData): Variants {
@@ -270,7 +273,7 @@ function clip(parts: Parts, columns: number): Parts {
   let remaining = Math.max(0, columns - 1);
   const result: Parts = [];
   for (const part of parts) {
-    const text = truncateToWidth(part.text, remaining, "");
+    const text = clipText(part.text, remaining, "");
     const width = visibleWidth(text);
     if (text) result.push({ ...part, text });
     remaining -= width;
@@ -295,8 +298,7 @@ function fitPair(leftOptions: Variants, rightOptions: Variants, columns: number)
   return { left: clip(fallback.parts, columns), right: [] };
 }
 
-export function layoutFooter(data: FooterData, columns: number): [Pair, Pair] {
-  columns = normalizeColumns(columns);
+function layoutFooter(data: FooterData, columns: number): [Pair, Pair] {
   return [
     fitPair(gitVariants(data.git), modelVariants(data), columns),
     fitPair(usageVariants(data), taskVariants(data.task), columns),

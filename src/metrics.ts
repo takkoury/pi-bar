@@ -107,8 +107,9 @@ export class TaskTracker {
     } else this.latestSpeed = null;
   }
 
-  settle(aborted: boolean): TaskSnapshot {
-    if (this.startedAt === null) return this.snapshot();
+  /** Returns a record only for a newly settled task. */
+  settle(aborted: boolean): TaskSnapshot | undefined {
+    if (this.startedAt === null) return;
     const state = aborted || this.lastStop === "aborted" ? "aborted" : this.lastStop === "error" ? "error" : "done";
     this.final = {
       state,
