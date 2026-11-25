@@ -104,7 +104,7 @@ test("all widths, states and palettes render exactly two bounded rows", () => {
           assert.doesNotMatch(row, /[\r\n]/);
           const parts = splitRow(row);
           assert.ok(parts.length <= 2);
-          for (const part of parts) assert.doesNotMatch(part, / {2}/);
+          for (const part of parts) assert.doesNotMatch(part.trimStart(), / {2}/);
           if (parts.length === 2) assert.equal(visibleWidth(row), columns);
         }
       }
@@ -143,29 +143,66 @@ test("no terminal control injection through repo/provider/model/thinking labels"
   assert.ok(!lines.some((line) => line.includes("\u202e")));
 });
 
-test("compact model labels retain the provider prefix", () => {
+test("shrinking width drops provider, then thinking, before clipping the model", () => {
   const data = example();
-  data.provider = "anthropic";
   data.model = "claude-opus-4-6-with-an-extra-long-model-name";
-  let shortened = false;
-  for (const columns of [60, 80, 100, 120, 160, 240]) {
-    const label = textRows(data, columns)[0][1];
-    if (!label) continue;
-    assert.ok(label.startsWith("[anthropic] "), label);
-    assert.ok(label.endsWith(" [high]"), label);
-    if (label.includes("…")) shortened = true;
+  const compact = `${data.model} [high]`;
+  assert.equal(textRows(data, 160)[0][1], `[openai-codex] ${compact}`);
+  assert.equal(textRows(data, 80)[0][1], compact);
+  assert.equal(textRows(data, 55)[0][1], data.model);
+  assert.match(textRows(data, 40)[0][1], /^claude-opus-4-6.*…$/);
+
+  data.model = "gpt-5.4";
+  for (const width of [40, 60]) {
+    const [git, model] = textRows(data, width)[0];
+    assert.match(git, /main/);
+    assert.equal(model, "gpt-5.4 [high]");
   }
-  assert.equal(shortened, true);
+  data.git.conflicts = 2;
+  assert.deepEqual(textRows(data, 25)[0], ["2 conflicts", data.model]);
+  assert.match(textRows(data, 12)[0][0], /2 conflicts/);
+});
+
+test("compact task states keep the icon and time before dropping to just the icon", () => {
+  const data = example();
+  data.task = { state: "working", elapsedMs: 133000, speed: 70 };
+  for (const [width, label] of [
+    [160, "● working │ 02:13 70tk/s"],
+    [60, "● 02:13 70tk/s"],
+    [30, "● 02:13"],
+    [12, "●"],
+  ] as const) {
+    const [usage, task] = textRows(data, width)[1];
+    assert.match(usage, /36%/);
+    assert.equal(task, label);
+  }
+  data.task.state = "done";
+  assert.equal(textRows(data, 30)[1][1], "✓ 02m13s");
+  for (const [state, icon] of [
+    ["error", "×"],
+    ["aborted", "■"],
+  ] as const) {
+    data.task.state = state;
+    assert.equal(textRows(data, 40)[1][1], `${icon} ${state} │ 02m13s`);
+    assert.equal(textRows(data, 12)[1][1], icon);
+  }
+  data.task.state = "idle";
+  data.context.tokens = null;
+  assert.deepEqual(textRows(data, 12)[1], ["?%", "○"]);
 });
 
 test("Cells has proportional fill and shrinks through eight, six and four cells", () => {
   const sizes = new Set<number>();
-  for (const columns of [20, 40, 60, 80, 120, 160]) {
+  for (const columns of [20, 25, 30, 40, 60, 80, 120, 160]) {
     for (const tokens of [0, 250000, 500000, 600000, null]) {
       const data = example();
       data.context.tokens = tokens;
       const row = renderFooter(data, columns, theme("dark"))[1];
       const size = stripVTControlCharacters(row).match(/▰+/)?.[0].length ?? 0;
+      if (!size) {
+        assert.equal(splitRow(row)[0], `${tokens === null ? "?" : Math.round(tokens / 5000)}%`);
+        continue;
+      }
       assert.ok([8, 6, 4].includes(size));
       if (columns === 160) assert.equal(size, 8);
       sizes.add(size);
@@ -349,10 +386,9 @@ test("thinking levels use the approved progressive purple ramp with neutral brac
       for (const columns of [80, 100, 160, 240]) {
         const row = renderFooter(data, columns, theme(appearance))[0];
         const label = splitRow(row)[1];
-        const model = label?.match(/^\[anthropic\] (.+) \[/)?.[1];
-        assert.ok(model);
-        expectColor(row, "[anthropic] ", palette.dim);
-        expectColor(row, model, palette.text);
+        assert.ok(label);
+        if (label.startsWith("[anthropic] ")) expectColor(row, "[anthropic] ", palette.dim);
+        expectColor(row, data.model, palette.text);
         expectColor(row, " [", palette.dim);
         expectColor(row, level, hex);
         expectColor(row, "]", palette.dim);

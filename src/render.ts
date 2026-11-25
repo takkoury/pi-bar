@@ -28,7 +28,6 @@ interface Pair {
 interface Variant {
   parts: Parts;
   width: number;
-  emergency: boolean;
 }
 type Variants = [Variant, ...Variant[]];
 
@@ -118,7 +117,7 @@ const clipText = (text: string, columns: number, ellipsis = "…"): string =>
 const widthOf = (parts: Parts): number => visibleWidth(parts.map((part) => part.text).join(""));
 const normalizeColumns = (columns: number): number => (Number.isFinite(columns) ? Math.max(0, Math.floor(columns)) : 0);
 const segment = (text: string, tone: Tone = "text"): Segment => ({ text, tone });
-const variant = (parts: Parts, emergency = false): Variant => ({ parts, width: widthOf(parts), emergency });
+const variant = (parts: Parts): Variant => ({ parts, width: widthOf(parts) });
 const metric = (count: number, label: string, tone: Tone): Parts => [segment(`${count} ${label}`, tone)];
 
 function joinGroups(groups: Parts[], separator = " │ "): Parts {
@@ -157,7 +156,10 @@ function gitVariants(data: GitSnapshot): Variants {
     const label =
       data.kind === "loading" ? "checking Git…" : data.kind === "not-repo" ? "not a Git repo" : "Git unavailable";
     const tone = data.kind === "error" ? "amber" : "dim";
-    return [variant(joinGroups([identity(), [segment(label, tone)]])), variant([segment(label, tone)])];
+    return [
+      variant(joinGroups([identity(), [segment(label, tone)]])),
+      variant(data.kind === "error" ? [segment(label, tone)] : identity(true)),
+    ];
   }
 
   const dirty: Parts[] = [];
@@ -185,8 +187,10 @@ function gitVariants(data: GitSnapshot): Variants {
       ? []
       : [segment(data.remoteState === "stale" ? "remote stale" : "remote cached", "amber")];
   const local: Parts = data.localStale ? [segment("status stale", "amber")] : [];
-  const warnings = joinGroups([local, data.conflicts ? compactDirty : [], remote], " · ");
-  const priority = warnings.length ? warnings : compactDirty;
+  const warnings = joinGroups([data.conflicts ? compactDirty : [], local, remote], " · ");
+  const summary = warnings.length ? warnings : data.dirtyFiles ? compactDirty : [];
+  const shortBranch = [segment(clipText(branch, 14))];
+  const warning = data.conflicts ? compactDirty : local.length ? local : remote;
   const comparison = joinGroups([remote, ...difference], " · ");
   const noUpstream = data.upstream ? [] : difference;
   const fullIdentity = identity();
@@ -195,23 +199,21 @@ function gitVariants(data: GitSnapshot): Variants {
     variant(joinGroups([fullIdentity, local, joinGroups(dirty, " · "), comparison])),
     variant(joinGroups([fullIdentity, local, compactDirty, comparison])),
     variant(joinGroups([shortIdentity, local, compactDirty, comparison])),
-    variant(joinGroups([shortIdentity, priority, ...noUpstream]), true),
-    // At tiny widths, preserve warnings before spending columns on a long repository name.
-    variant(joinGroups([priority, ...noUpstream, [segment(clipText(branch, 10))]]), true),
-    variant(priority, true),
+    variant(joinGroups([shortIdentity, summary, ...noUpstream])),
+    variant(joinGroups([shortBranch, summary])),
+    variant(joinGroups([shortBranch, warning])),
+    variant(warning.length ? warning : shortBranch),
   ];
 }
 
-function modelVariants(data: FooterData): Variants {
+function modelVariants(data: FooterData): [Variant, Variant, Variant] {
   const provider = cleanText(data.provider);
   const prefix = provider ? `[${provider}] ` : "";
   const model = cleanText(data.model || "no model");
-  const short = model.replace(/^claude-/, "");
   const thinking = cleanText(data.thinking);
   const level = [segment(" [", "dim"), segment(thinking, thinkingTones.get(thinking) ?? "dim"), segment("]", "dim")];
-  const label = (name: string): Variant =>
-    variant([segment(prefix, "dim"), segment(name, model === "no model" ? "dim" : "text"), ...level]);
-  return [label(model), label(short), label(clipText(short, 22))];
+  const name = segment(model, model === "no model" ? "dim" : "text");
+  return [variant([segment(prefix, "dim"), name, ...level]), variant([name, ...level]), variant([name])];
 }
 
 function usageVariants(data: FooterData): Variants {
@@ -242,16 +244,19 @@ function usageVariants(data: FooterData): Variants {
     variant(joinGroups([context(8), io, cache, cost])),
     variant(joinGroups([context(6), io, cache, cost])),
     variant(joinGroups([context(6), io, cost])),
-    variant(joinGroups([context(6), cost])),
-    variant(joinGroups([context(4), cost])),
+    variant(joinGroups([context(6), io])),
+    variant(context(6)),
     variant(context(4)),
+    variant([segment(`${known ? Math.round(percent) : "?"}%`, tone)]),
   ];
 }
 
-function taskVariants(task: TaskSnapshot): Variants {
+function taskVariants(task: TaskSnapshot) {
   const [icon, tone] = taskStyles[task.state];
-  const status = [{ ...segment(icon, tone), pulse: task.state === "working" }, segment(` ${task.state}`, tone)];
-  if (task.state === "idle") return [variant(status)];
+  const symbol = [{ ...segment(icon, tone), pulse: task.state === "working" }];
+  const status = [...symbol, segment(` ${task.state}`, tone)];
+  const iconOnly = variant(symbol);
+  if (task.state === "idle") return { full: variant(status), compact: [iconOnly], minimum: [iconOnly], iconOnly };
   const time = [
     segment(
       task.elapsedMs === null ? "—" : formatDuration(task.elapsedMs, task.state === "working" ? "clock" : "units"),
@@ -261,11 +266,16 @@ function taskVariants(task: TaskSnapshot): Variants {
   const { speed } = task;
   const hasSpeed = speed !== null && Number.isFinite(speed) && (task.state === "working" || task.state === "done");
   const rate = [segment(hasSpeed ? `${Math.round(speed)}tk/s` : "—", hasSpeed ? "lavender" : "dim")];
-  return [
-    variant(joinGroups([status, joinGroups([time, rate], " ")])),
-    variant(joinGroups([status, time])),
-    variant(status),
-  ];
+  const elapsed = variant(joinGroups([symbol, time], " "));
+  const compact = [elapsed];
+  if (task.state === "error" || task.state === "aborted") compact.unshift(variant(joinGroups([status, time])));
+  else if (hasSpeed) compact.unshift(variant(joinGroups([symbol, time, rate], " ")));
+  return {
+    full: variant(joinGroups([status, joinGroups([time, rate], " ")])),
+    compact,
+    minimum: [elapsed, iconOnly],
+    iconOnly,
+  };
 }
 
 function clip(parts: Parts, columns: number): Parts {
@@ -283,26 +293,39 @@ function clip(parts: Parts, columns: number): Parts {
   return result;
 }
 
-function fitPair(leftOptions: Variants, rightOptions: Variants, columns: number): Pair {
-  for (const left of leftOptions) {
-    if (left.emergency) continue;
-    for (const right of rightOptions) {
-      if (left.width + right.width + MIN_PAIR_GAP <= columns) return { left: left.parts, right: right.parts };
-    }
+function fitPair(leftOptions: Variant[], rightOptions: Variant[], columns: number): Pair | undefined {
+  for (const right of rightOptions) {
+    const left = leftOptions.find((option) => option.width + MIN_PAIR_GAP + right.width <= columns);
+    if (left) return { left: left.parts, right: right.parts };
   }
-  let fallback = leftOptions[0];
-  for (const left of leftOptions) {
-    if (left.width <= columns) return { left: left.parts, right: [] };
-    fallback = left;
-  }
-  return { left: clip(fallback.parts, columns), right: [] };
+  return undefined;
 }
 
-function layoutFooter(data: FooterData, columns: number): [Pair, Pair] {
-  return [
-    fitPair(gitVariants(data.git), modelVariants(data), columns),
-    fitPair(usageVariants(data), taskVariants(data.task), columns),
-  ];
+function identityRow(data: FooterData, columns: number): Pair {
+  const git = gitVariants(data.git);
+  const [full, thinking, name] = modelVariants(data);
+  const essential = git[git.length - 1];
+  // Provider is a wide-layout detail. Never bring it back just because Git got shorter.
+  const pair = fitPair([git[0]], [full], columns) ?? fitPair(git, [thinking, name], columns);
+  if (pair) return pair;
+
+  const budget = columns - essential.width - MIN_PAIR_GAP;
+  if (budget >= 8) return { left: essential.parts, right: clip(name.parts, budget) };
+  if (data.git.conflicts || data.git.kind === "error" || data.git.localStale || data.git.remoteState === "stale") {
+    return { left: clip(essential.parts, columns), right: [] };
+  }
+  return { left: [], right: clip(name.parts, columns) };
+}
+
+function activityRow(data: FooterData, columns: number): Pair {
+  const usage = usageVariants(data);
+  const task = taskVariants(data.task);
+  const percent = usage[usage.length - 1];
+  return (
+    fitPair([usage[0]], [task.full], columns) ??
+    fitPair(usage.slice(0, -1), task.compact, columns) ??
+    fitPair([percent], task.minimum, columns) ?? { left: [], right: task.iconOnly.parts }
+  );
 }
 
 export function renderFooter(data: FooterData, columns: number, theme: Theme, pulse = false): string[] {
@@ -310,7 +333,7 @@ export function renderFooter(data: FooterData, columns: number, theme: Theme, pu
   const palette = colors[theme.appearance];
   const paint = (parts: Parts) =>
     parts.map((part) => theme.style(part.text, { fg: palette[part.tone], dim: Boolean(part.pulse && pulse) })).join("");
-  return layoutFooter(data, columns).map(({ left, right }) => {
+  return [identityRow(data, columns), activityRow(data, columns)].map(({ left, right }) => {
     const gap = right.length ? " ".repeat(Math.max(0, columns - widthOf(left) - widthOf(right))) : "";
     return truncateToWidth(paint(left) + gap + paint(right), columns, "");
   });
